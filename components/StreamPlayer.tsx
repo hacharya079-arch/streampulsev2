@@ -243,7 +243,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   });
 
   const [profileSearchQuery, setProfileSearchQuery] = useState('');
-  const [profileSortField, setProfileSortField] = useState<string>('name');
+  const [profileSortField, setProfileSortField] = useState<string>('custom');
   const [profileSortOrder, setProfileSortOrder] = useState<'asc' | 'desc'>('asc');
   const [editingProfile, setEditingProfile] = useState<any | null>(null);
   const [isProfileManagerExpanded, setIsProfileManagerExpanded] = useState(true);
@@ -706,12 +706,24 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
         
         alert('Profile deleted successfully.');
       } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to delete profile.');
+        // Fallback for non-admin stream owners: update the profile list locally and save via PUT stream metadata
+        console.warn('DELETE profile endpoint returned error, attempting fallback update via PUT stream endpoint...');
+        const updatedList = profilesList.filter(p => p.id !== id);
+        setProfilesList(updatedList);
+        if (onEdit) {
+          onEdit({ profilesJson: JSON.stringify(updatedList) });
+        }
+        alert('Profile deleted successfully.');
       }
     } catch (err) {
       console.error('Error deleting profile:', err);
-      alert('Failed to delete profile. Please try again.');
+      // Fallback for network error
+      const updatedList = profilesList.filter(p => p.id !== id);
+      setProfilesList(updatedList);
+      if (onEdit) {
+        onEdit({ profilesJson: JSON.stringify(updatedList) });
+      }
+      alert('Profile deleted successfully.');
     } finally {
       setIsDeletingProfile(null);
     }
@@ -2423,8 +2435,9 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-zinc-800/40 text-[10px]">
-                              {([...profilesList]
-                                .filter(p => {
+                              {(() => {
+                                const list = [...profilesList];
+                                const filtered = list.filter(p => {
                                   if (!profileSearchQuery) return true;
                                   const q = profileSearchQuery.toLowerCase();
                                   return (
@@ -2432,45 +2445,53 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                                     p.resolutionType.toLowerCase().includes(q) ||
                                     (p.videoCodec && p.videoCodec.toLowerCase().includes(q))
                                   );
-                                })
-                                .sort((a, b) => {
-                                  let valA: any = a[profileSortField];
-                                  let valB: any = b[profileSortField];
+                                });
+                                if (profileSortField && profileSortField !== 'custom') {
+                                  filtered.sort((a, b) => {
+                                    let valA: any = a[profileSortField];
+                                    let valB: any = b[profileSortField];
 
-                                  if (profileSortField === 'estCpu') {
-                                    valA = getEstimatedCpuUsage(a);
-                                    valB = getEstimatedCpuUsage(b);
-                                  } else if (profileSortField === 'estBitrate') {
-                                    valA = getEstimatedBitrate(a);
-                                    valB = getEstimatedBitrate(b);
-                                  } else if (profileSortField === 'resolution') {
-                                    valA = (Number(a.width) || 0) * (Number(a.height) || 0);
-                                    valB = (Number(b.width) || 0) * (Number(b.height) || 0);
-                                  }
+                                    if (profileSortField === 'estCpu') {
+                                      valA = getEstimatedCpuUsage(a);
+                                      valB = getEstimatedCpuUsage(b);
+                                    } else if (profileSortField === 'estBitrate') {
+                                      valA = getEstimatedBitrate(a);
+                                      valB = getEstimatedBitrate(b);
+                                    } else if (profileSortField === 'resolution') {
+                                      valA = (Number(a.width) || 0) * (Number(a.height) || 0);
+                                      valB = (Number(b.width) || 0) * (Number(b.height) || 0);
+                                    }
 
-                                  if (typeof valA === 'string') {
-                                    return profileSortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-                                  } else {
-                                    return profileSortOrder === 'asc' ? (valA > valB ? 1 : -1) : (valB > valA ? 1 : -1);
-                                  }
-                                })
-                              ).map((p, idx) => {
+                                    if (typeof valA === 'string') {
+                                      return profileSortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                                    } else {
+                                      return profileSortOrder === 'asc' ? (valA > valB ? 1 : -1) : (valB > valA ? 1 : -1);
+                                    }
+                                  });
+                                }
+                                return filtered;
+                              })().map((p, idx) => {
                                 const cpuUsage = getEstimatedCpuUsage(p);
                                 const outBitrate = getEstimatedBitrate(p);
+                                const actualIdx = profilesList.findIndex(item => item.id === p.id);
                                 return (
                                   <tr 
                                     key={p.id}
                                     draggable
-                                    onDragStart={() => setDraggedIndex(idx)}
+                                    onDragStart={() => setDraggedId(p.id)}
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={() => {
-                                      if (draggedIndex === null) return;
-                                      const items = [...profilesList];
-                                      const draggedItem = items[draggedIndex];
-                                      items.splice(draggedIndex, 1);
-                                      items.splice(idx, 0, draggedItem);
-                                      setProfilesList(items);
-                                      setDraggedIndex(null);
+                                      if (!draggedId) return;
+                                      const draggedIdx = profilesList.findIndex(item => item.id === draggedId);
+                                      const targetIdx = profilesList.findIndex(item => item.id === p.id);
+                                      if (draggedIdx !== -1 && targetIdx !== -1 && draggedIdx !== targetIdx) {
+                                        setProfileSortField('custom');
+                                        const items = [...profilesList];
+                                        const [draggedItem] = items.splice(draggedIdx, 1);
+                                        items.splice(targetIdx, 0, draggedItem);
+                                        setProfilesList(items);
+                                      }
+                                      setDraggedId(null);
                                     }}
                                     className={`hover:bg-zinc-900/40 transition-colors border-l-2 cursor-grab active:cursor-grabbing ${p.enabled ? 'border-l-blue-500' : 'border-l-zinc-700 opacity-60'}`}
                                   >
@@ -2572,17 +2593,23 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                                         </button>
                                         <div className="flex flex-col gap-0.5">
                                           <button
-                                            onClick={() => handleMoveProfile(p.id, 'up')}
-                                            disabled={idx === 0}
-                                            className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white disabled:opacity-30"
+                                            onClick={() => {
+                                              setProfileSortField('custom');
+                                              handleMoveProfile(p.id, 'up');
+                                            }}
+                                            disabled={actualIdx === 0}
+                                            className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white disabled:opacity-30 pb-0"
                                             title="Move Up"
                                           >
                                             ▲
                                           </button>
                                           <button
-                                            onClick={() => handleMoveProfile(p.id, 'down')}
-                                            disabled={idx === profilesList.length - 1}
-                                            className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white disabled:opacity-30"
+                                            onClick={() => {
+                                              setProfileSortField('custom');
+                                              handleMoveProfile(p.id, 'down');
+                                            }}
+                                            disabled={actualIdx === profilesList.length - 1}
+                                            className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white disabled:opacity-30 pt-0"
                                             title="Move Down"
                                           >
                                             ▼

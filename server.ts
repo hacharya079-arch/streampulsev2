@@ -1124,7 +1124,7 @@ segment3.ts
     }
   });
 
-  app.delete('/api/streams/:streamId/profiles/:profileId', authenticateToken, requireAdmin, async (req, res) => {
+  app.delete('/api/streams/:streamId/profiles/:profileId', authenticateToken, requireStreamOwnership, async (req, res) => {
     try {
       const { streamId, profileId } = req.params;
       console.log(`[Streaming Engine] Received request to delete profile ${profileId} from stream ${streamId}`);
