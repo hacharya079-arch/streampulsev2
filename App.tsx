@@ -925,20 +925,6 @@ CREATE TABLE IF NOT EXISTS streams (
               />
             </div>
 
-            {authMode === 'register' && (
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Email Address</label>
-                <input 
-                  type="email" 
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@streampulse.io" 
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100"
-                />
-              </div>
-            )}
-
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Password</label>
               <input 
@@ -956,16 +942,12 @@ CREATE TABLE IF NOT EXISTS streams (
               disabled={authLoading}
               className="w-full h-10 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 mt-2"
             >
-              {authLoading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : authMode === 'login' ? 'Sign In' : 'Create Administrator Account'}
+              {authLoading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : 'Sign In'}
             </button>
           </form>
 
           <div className="mt-6 pt-6 border-t border-zinc-800 text-center text-xs text-zinc-500">
-            {authMode === 'login' ? (
-              <p>Don't have an administrator account? <button onClick={() => { setAuthMode('register'); setAuthError(null); }} className="text-blue-400 font-bold hover:underline">Register VPS</button></p>
-            ) : (
-              <p>Already have an administrator account? <button onClick={() => { setAuthMode('login'); setAuthError(null); }} className="text-blue-400 font-bold hover:underline">Sign In</button></p>
-            )}
+            <p className="text-zinc-500">Access to this system is restricted to authorized operators only.</p>
           </div>
         </div>
       </div>

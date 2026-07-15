@@ -2,6 +2,7 @@ import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
 
 // Load environment variables before any evaluation is done
 dotenv.config();
@@ -217,19 +218,36 @@ if (fs.existsSync(JSON_DB_PATH)) {
   } catch (err) {
     console.error('Error reading JSON DB fallback, using defaults', err);
   }
-} else {
-  // Create initial admin user
-  // Password hash for 'admin123'
-  // $2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW
+}
+
+// Ensure at least one administrator exists in the local JSON database
+const defaultAdminUsername = process.env.ADMIN_USERNAME || 'admin';
+const defaultAdminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
+const oldHardcodedHash = '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW';
+
+const hasAdmin = localState.users.some(u => u.role === 'admin');
+if (!hasAdmin) {
+  const salt = bcrypt.genSaltSync(10);
+  const passwordHash = bcrypt.hashSync(defaultAdminPassword, salt);
   localState.users.push({
-    id: 1,
-    username: 'admin',
-    email: 'admin@streampulse.io',
-    password_hash: '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW',
+    id: localState.users.length > 0 ? Math.max(...localState.users.map(u => u.id)) + 1 : 1,
+    username: defaultAdminUsername,
+    email: `${defaultAdminUsername}@streampulse.io`,
+    password_hash: passwordHash,
     role: 'admin',
     created_at: new Date().toISOString()
   });
   fs.writeFileSync(JSON_DB_PATH, JSON.stringify(localState, null, 2));
+  console.log(`Seeded default admin account (${defaultAdminUsername}) into local JSON database.`);
+} else {
+  // Update existing default admin if password hash is the old hardcoded one
+  const existingDefaultAdmin = localState.users.find(u => u.username === defaultAdminUsername);
+  if (existingDefaultAdmin && existingDefaultAdmin.password_hash === oldHardcodedHash) {
+    const salt = bcrypt.genSaltSync(10);
+    existingDefaultAdmin.password_hash = bcrypt.hashSync(defaultAdminPassword, salt);
+    fs.writeFileSync(JSON_DB_PATH, JSON.stringify(localState, null, 2));
+    console.log(`Updated default admin password to environment ADMIN_PASSWORD in local JSON database.`);
+  }
 }
 
 // Function to save state to file
@@ -443,14 +461,28 @@ export const db = {
           `);
           console.log('PostgreSQL Database tables verified/created successfully.');
           
-          // Seed default admin if table is empty
-          const userCount = await client.query('SELECT COUNT(*) FROM users');
-          if (parseInt(userCount.rows[0].count, 10) === 0) {
+          // Seed default admin if no administrator exists
+          const adminCheck = await client.query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
+          const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+          const adminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
+          if (parseInt(adminCheck.rows[0].count, 10) === 0) {
+            const salt = await bcrypt.genSalt(10);
+            const passwordHash = await bcrypt.hash(adminPassword, salt);
             await client.query(`
               INSERT INTO users (username, email, password_hash, role)
-              VALUES ('admin', 'admin@streampulse.io', '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW', 'admin')
-            `);
-            console.log('Seeded default admin account into PostgreSQL.');
+              VALUES ($1, $2, $3, 'admin')
+            `, [adminUsername, `${adminUsername}@streampulse.io`, passwordHash]);
+            console.log(`Seeded default admin account (${adminUsername}) into PostgreSQL.`);
+          } else {
+            // Update existing default admin if password hash is the old hardcoded one
+            const oldHardcodedHash = '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW';
+            const existingAdminRes = await client.query("SELECT * FROM users WHERE username = $1", [adminUsername]);
+            if (existingAdminRes.rows.length > 0 && existingAdminRes.rows[0].password_hash === oldHardcodedHash) {
+              const salt = await bcrypt.genSalt(10);
+              const passwordHash = await bcrypt.hash(adminPassword, salt);
+              await client.query("UPDATE users SET password_hash = $1 WHERE username = $2", [passwordHash, adminUsername]);
+              console.log(`Updated default admin password to environment ADMIN_PASSWORD in PostgreSQL.`);
+            }
           }
         } finally {
           client.release();

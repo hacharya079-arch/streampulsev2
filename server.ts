@@ -663,39 +663,7 @@ segment3.ts
   // AUTH API ENDPOINTS
   // ----------------------------------------------------
   app.post('/api/auth/register', async (req, res) => {
-    const { username, email, password, role } = req.body;
-    if (!username || !email || !password) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-
-    try {
-      const existingUser = await db.getUserByUsername(username);
-      if (existingUser) {
-        return res.status(400).json({ error: 'Username already exists' });
-      }
-
-      const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash(password, salt);
-
-      const newUser = await db.createUser(username, email, passwordHash, role || 'user');
-      const token = jwt.sign({ id: newUser.id, username: newUser.username, role: newUser.role }, JWT_SECRET, { expiresIn: '7d' });
-
-      res.status(201).json({
-        token,
-        user: {
-          id: newUser.id,
-          username: newUser.username,
-          email: newUser.email,
-          role: newUser.role,
-          createdAt: newUser.created_at,
-          status: newUser.status || 'enabled',
-          assigned_stream_id: newUser.assigned_stream_id || null
-        }
-      });
-    } catch (err: any) {
-      console.error('Register error:', err);
-      res.status(500).json({ error: 'Server error during registration' });
-    }
+    return res.status(403).json({ error: 'Public registration is disabled' });
   });
 
   app.post('/api/auth/login', async (req, res) => {
