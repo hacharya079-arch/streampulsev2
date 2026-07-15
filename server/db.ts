@@ -1,6 +1,10 @@
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
+import dotenv from 'dotenv';
+
+// Load environment variables before any evaluation is done
+dotenv.config();
 
 // Let's create a local file path for fallback JSON persistence
 const DATA_DIR = path.resolve('./data');
@@ -242,7 +246,29 @@ const { Pool } = pg;
 let pgPool: pg.Pool | null = null;
 let usePostgres = false;
 
-if (process.env.DB_HOST && process.env.DB_USER && process.env.DB_PASSWORD && process.env.DB_NAME) {
+const storageMode = (process.env.STORAGE_MODE || 'postgres').toLowerCase().trim();
+
+if (storageMode !== 'postgres' && storageMode !== 'json') {
+  const errMsg = `CRITICAL CONFIGURATION ERROR: Invalid STORAGE_MODE "${process.env.STORAGE_MODE}". Must be either "postgres" or "json".`;
+  console.error(errMsg);
+  throw new Error(errMsg);
+}
+
+const isDevFallbackAllowed = storageMode === 'json';
+const hasPostgresConfig = !!(process.env.DB_HOST && process.env.DB_USER && process.env.DB_PASSWORD && process.env.DB_NAME);
+
+if (storageMode === 'postgres') {
+  if (!hasPostgresConfig) {
+    const missingKeys = [];
+    if (!process.env.DB_HOST) missingKeys.push('DB_HOST');
+    if (!process.env.DB_USER) missingKeys.push('DB_USER');
+    if (!process.env.DB_PASSWORD) missingKeys.push('DB_PASSWORD');
+    if (!process.env.DB_NAME) missingKeys.push('DB_NAME');
+    const msg = `CRITICAL CONFIGURATION ERROR: STORAGE_MODE is "postgres" but required PostgreSQL environment variables are missing [${missingKeys.join(', ')}].`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+
   try {
     pgPool = new Pool({
       host: process.env.DB_HOST,
@@ -252,180 +278,200 @@ if (process.env.DB_HOST && process.env.DB_USER && process.env.DB_PASSWORD && pro
       database: process.env.DB_NAME,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      connectionTimeoutMillis: 5000,
     });
+    
+    pgPool.on('error', (err) => {
+      console.error('Unexpected error on idle PostgreSQL client:', err);
+    });
+    
     usePostgres = true;
-    console.log('PostgreSQL configuration found. Running database initializer...');
+    console.log('PostgreSQL configuration initialized successfully. Connection pool created.');
   } catch (err) {
-    console.error('Failed to configure PostgreSQL pool, falling back to JSON storage.', err);
-    usePostgres = false;
+    console.error('CRITICAL: Failed to create PostgreSQL connection pool:', err);
+    throw err;
   }
 } else {
-  console.log('PostgreSQL env variables not set. Using secure local file-system persistence (data/db.json).');
+  console.log('STORAGE_MODE explicitly configured to "json". Using local secure file-system persistence (data/db.json).');
 }
 
 // Database helper functions supporting both real Postgres and persistent JSON Fallback
 export const db = {
   // Initialize Database tables if PostgreSQL is connected
   init: async () => {
-    if (!usePostgres || !pgPool) return;
-    try {
-      const client = await pgPool.connect();
+    if (usePostgres && pgPool) {
       try {
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(50) UNIQUE NOT NULL,
-            email VARCHAR(100) NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
-            role VARCHAR(20) DEFAULT 'user',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-
-          ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'enabled';
-          ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_stream_id VARCHAR(50);
-          ALTER TABLE users ADD COLUMN IF NOT EXISTS login_history TEXT;
-
-          CREATE TABLE IF NOT EXISTS streams (
-            id VARCHAR(50) PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            title VARCHAR(255) NOT NULL,
-            broadcaster VARCHAR(100) NOT NULL,
-            stream_key VARCHAR(100) UNIQUE NOT NULL,
-            status VARCHAR(50) DEFAULT 'offline',
-            scheduled_start TIMESTAMP,
-            rtmp_url VARCHAR(255) NOT NULL,
-            resolution VARCHAR(20) DEFAULT '1080p',
-            bitrate INTEGER DEFAULT 4500,
-            codec VARCHAR(20) DEFAULT 'H.264',
-            ingest_ip VARCHAR(50) NOT NULL,
-            viewers INTEGER DEFAULT 0,
-            start_time TIMESTAMP
-          );
-
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS width INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS height INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS fps INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS aspect_ratio VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS video_codec VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_codec VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS preset VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS profile VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS pixel_format VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS enabled_profiles VARCHAR(255);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS gop_size INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS buffer_size INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS max_bitrate INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS scaling_algorithm VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_enabled BOOLEAN DEFAULT TRUE;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_bitrate VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_sample_rate INTEGER;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_channels VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_volume INTEGER DEFAULT 100;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_normalize BOOLEAN DEFAULT FALSE;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_noise_reduction BOOLEAN DEFAULT FALSE;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_delay INTEGER DEFAULT 0;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_language VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_track_selection VARCHAR(50);
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_passthrough BOOLEAN DEFAULT FALSE;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_transcoding BOOLEAN DEFAULT TRUE;
-          ALTER TABLE streams ADD COLUMN IF NOT EXISTS profiles_json TEXT;
-
-          CREATE TABLE IF NOT EXISTS devices (
-            id VARCHAR(50) PRIMARY KEY,
-            name VARCHAR(100) NOT NULL,
-            location VARCHAR(100),
-            description VARCHAR(255),
-            os_version VARCHAR(50),
-            player_version VARCHAR(50),
-            ip_address VARCHAR(50),
-            mac_address VARCHAR(50),
-            last_seen TIMESTAMP,
-            online_status VARCHAR(50) DEFAULT 'offline',
-            current_stream_id VARCHAR(50),
-            current_stream_url VARCHAR(255),
-            current_resolution VARCHAR(50),
-            current_volume INTEGER DEFAULT 100,
-            current_playback_status VARCHAR(50),
-            pairing_code VARCHAR(20),
-            paired BOOLEAN DEFAULT FALSE,
-            token VARCHAR(255),
-            cpu_usage DOUBLE PRECISION,
-            ram_usage DOUBLE PRECISION,
-            temperature DOUBLE PRECISION,
-            network_speed VARCHAR(50),
-            screenshot_url VARCHAR(255),
-            screenshot_time TIMESTAMP,
-            brightness INTEGER DEFAULT 100,
-            rotation VARCHAR(20) DEFAULT '0',
-            player_settings TEXT,
-            network_settings TEXT,
-            client_version VARCHAR(50) DEFAULT '1.0.0'
-          );
-
-          ALTER TABLE devices ADD COLUMN IF NOT EXISTS brightness INTEGER DEFAULT 100;
-          ALTER TABLE devices ADD COLUMN IF NOT EXISTS rotation VARCHAR(20) DEFAULT '0';
-          ALTER TABLE devices ADD COLUMN IF NOT EXISTS player_settings TEXT;
-          ALTER TABLE devices ADD COLUMN IF NOT EXISTS network_settings TEXT;
-          ALTER TABLE devices ADD COLUMN IF NOT EXISTS client_version VARCHAR(50) DEFAULT '1.0.0';
-
-          CREATE TABLE IF NOT EXISTS device_groups (
-            id VARCHAR(50) PRIMARY KEY,
-            name VARCHAR(100) NOT NULL,
-            description VARCHAR(255)
-          );
-
-          CREATE TABLE IF NOT EXISTS device_group_members (
-            group_id VARCHAR(50) REFERENCES device_groups(id) ON DELETE CASCADE,
-            device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
-            PRIMARY KEY (group_id, device_id)
-          );
-
-          CREATE TABLE IF NOT EXISTS playback_history (
-            id VARCHAR(50) PRIMARY KEY,
-            device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
-            stream_id VARCHAR(50),
-            stream_url VARCHAR(255),
-            action VARCHAR(50),
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-
-          CREATE TABLE IF NOT EXISTS device_logs (
-            id VARCHAR(50) PRIMARY KEY,
-            device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
-            level VARCHAR(20) DEFAULT 'info',
-            message TEXT NOT NULL,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-
-          CREATE TABLE IF NOT EXISTS device_schedules (
-            id VARCHAR(50) PRIMARY KEY,
-            device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
-            group_id VARCHAR(50) REFERENCES device_groups(id) ON DELETE CASCADE,
-            time VARCHAR(10) NOT NULL,
-            action VARCHAR(20) NOT NULL,
-            stream_id VARCHAR(50),
-            stream_url VARCHAR(255),
-            enabled BOOLEAN DEFAULT TRUE
-          );
-        `);
-        console.log('PostgreSQL Database tables verified/created successfully.');
-        
-        // Seed default admin if table is empty
-        const userCount = await client.query('SELECT COUNT(*) FROM users');
-        if (parseInt(userCount.rows[0].count, 10) === 0) {
+        console.log('Connecting to PostgreSQL database to verify tables and migrate...');
+        const client = await pgPool.connect();
+        try {
           await client.query(`
-            INSERT INTO users (username, email, password_hash, role)
-            VALUES ('admin', 'admin@streampulse.io', '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW', 'admin')
+            CREATE TABLE IF NOT EXISTS users (
+              id SERIAL PRIMARY KEY,
+              username VARCHAR(50) UNIQUE NOT NULL,
+              email VARCHAR(100) NOT NULL,
+              password_hash VARCHAR(255) NOT NULL,
+              role VARCHAR(20) DEFAULT 'user',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'enabled';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_stream_id VARCHAR(50);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS login_history TEXT;
+
+            CREATE TABLE IF NOT EXISTS streams (
+              id VARCHAR(50) PRIMARY KEY,
+              user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+              title VARCHAR(255) NOT NULL,
+              broadcaster VARCHAR(100) NOT NULL,
+              stream_key VARCHAR(100) UNIQUE NOT NULL,
+              status VARCHAR(50) DEFAULT 'offline',
+              scheduled_start TIMESTAMP,
+              rtmp_url VARCHAR(255) NOT NULL,
+              resolution VARCHAR(20) DEFAULT '1080p',
+              bitrate INTEGER DEFAULT 4500,
+              codec VARCHAR(20) DEFAULT 'H.264',
+              ingest_ip VARCHAR(50) NOT NULL,
+              viewers INTEGER DEFAULT 0,
+              start_time TIMESTAMP
+            );
+
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS width INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS height INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS fps INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS aspect_ratio VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS video_codec VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_codec VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS preset VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS profile VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS pixel_format VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS enabled_profiles VARCHAR(255);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS gop_size INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS buffer_size INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS max_bitrate INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS scaling_algorithm VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_enabled BOOLEAN DEFAULT TRUE;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_bitrate VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_sample_rate INTEGER;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_channels VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_volume INTEGER DEFAULT 100;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_normalize BOOLEAN DEFAULT FALSE;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_noise_reduction BOOLEAN DEFAULT FALSE;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_delay INTEGER DEFAULT 0;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_language VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_track_selection VARCHAR(50);
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_passthrough BOOLEAN DEFAULT FALSE;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS audio_transcoding BOOLEAN DEFAULT TRUE;
+            ALTER TABLE streams ADD COLUMN IF NOT EXISTS profiles_json TEXT;
+
+            CREATE TABLE IF NOT EXISTS devices (
+              id VARCHAR(50) PRIMARY KEY,
+              name VARCHAR(100) NOT NULL,
+              location VARCHAR(100),
+              description VARCHAR(255),
+              os_version VARCHAR(50),
+              player_version VARCHAR(50),
+              ip_address VARCHAR(50),
+              mac_address VARCHAR(50),
+              last_seen TIMESTAMP,
+              online_status VARCHAR(50) DEFAULT 'offline',
+              current_stream_id VARCHAR(50),
+              current_stream_url VARCHAR(255),
+              current_resolution VARCHAR(50),
+              current_volume INTEGER DEFAULT 100,
+              current_playback_status VARCHAR(50),
+              pairing_code VARCHAR(20),
+              paired BOOLEAN DEFAULT FALSE,
+              token VARCHAR(255),
+              cpu_usage DOUBLE PRECISION,
+              ram_usage DOUBLE PRECISION,
+              temperature DOUBLE PRECISION,
+              network_speed VARCHAR(50),
+              screenshot_url VARCHAR(255),
+              screenshot_time TIMESTAMP,
+              brightness INTEGER DEFAULT 100,
+              rotation VARCHAR(20) DEFAULT '0',
+              player_settings TEXT,
+              network_settings TEXT,
+              client_version VARCHAR(50) DEFAULT '1.0.0'
+            );
+
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS brightness INTEGER DEFAULT 100;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS rotation VARCHAR(20) DEFAULT '0';
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS player_settings TEXT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS network_settings TEXT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS client_version VARCHAR(50) DEFAULT '1.0.0';
+
+            CREATE TABLE IF NOT EXISTS device_groups (
+              id VARCHAR(50) PRIMARY KEY,
+              name VARCHAR(100) NOT NULL,
+              description VARCHAR(255)
+            );
+
+            CREATE TABLE IF NOT EXISTS device_group_members (
+              group_id VARCHAR(50) REFERENCES device_groups(id) ON DELETE CASCADE,
+              device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
+              PRIMARY KEY (group_id, device_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS playback_history (
+              id VARCHAR(50) PRIMARY KEY,
+              device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
+              stream_id VARCHAR(50),
+              stream_url VARCHAR(255),
+              action VARCHAR(50),
+              timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS device_logs (
+              id VARCHAR(50) PRIMARY KEY,
+              device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
+              level VARCHAR(20) DEFAULT 'info',
+              message TEXT NOT NULL,
+              timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS device_schedules (
+              id VARCHAR(50) PRIMARY KEY,
+              device_id VARCHAR(50) REFERENCES devices(id) ON DELETE CASCADE,
+              group_id VARCHAR(50) REFERENCES device_groups(id) ON DELETE CASCADE,
+              time VARCHAR(10) NOT NULL,
+              action VARCHAR(20) NOT NULL,
+              stream_id VARCHAR(50),
+              stream_url VARCHAR(255),
+              enabled BOOLEAN DEFAULT TRUE
+            );
           `);
-          console.log('Seeded default admin account into PostgreSQL.');
+          console.log('PostgreSQL Database tables verified/created successfully.');
+          
+          // Seed default admin if table is empty
+          const userCount = await client.query('SELECT COUNT(*) FROM users');
+          if (parseInt(userCount.rows[0].count, 10) === 0) {
+            await client.query(`
+              INSERT INTO users (username, email, password_hash, role)
+              VALUES ('admin', 'admin@streampulse.io', '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW', 'admin')
+            `);
+            console.log('Seeded default admin account into PostgreSQL.');
+          }
+        } finally {
+          client.release();
         }
-      } finally {
-        client.release();
+      } catch (err) {
+        console.error('CRITICAL: Error connecting to or migrating PostgreSQL database:', err);
+        if (!isDevFallbackAllowed) {
+          console.error('Database connection and migration failures in "postgres" storage mode are fatal. Aborting startup.');
+          throw err;
+        } else {
+          console.log('Switching to local secure file-system persistence (data/db.json) as allowed by storage mode.');
+          usePostgres = false;
+        }
       }
-    } catch (err) {
-      console.error('Error initializing PostgreSQL database, switching to file fallback:', err);
-      usePostgres = false;
+    } else {
+      if (!isDevFallbackAllowed) {
+        const msg = 'CRITICAL: PostgreSQL pool is not active, but STORAGE_MODE is not "json". Failing startup.';
+        console.error(msg);
+        throw new Error(msg);
+      }
+      console.log('PostgreSQL is disabled; using local JSON fallback database as explicitly configured.');
     }
   },
 
@@ -1426,6 +1472,16 @@ export const db = {
       return true;
     }
     return false;
+  },
+
+  close: async (): Promise<void> => {
+    if (pgPool) {
+      console.log('Closing PostgreSQL database connection pool gracefully...');
+      await pgPool.end();
+      pgPool = null;
+      usePostgres = false;
+      console.log('PostgreSQL pool closed successfully.');
+    }
   }
 
 };

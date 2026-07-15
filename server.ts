@@ -18,17 +18,23 @@ dotenv.config();
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'streampulse_default_secret_key_98451023';
 
-// Initialize Gemini SDK with server-side API key securely
+const isAiEnabled = process.env.AI_ENABLED === 'true';
+
+// Initialize Gemini SDK with server-side API key securely if AI is enabled
 let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  try {
-    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    console.log('Gemini API client initialized successfully server-side.');
-  } catch (err) {
-    console.error('Error initializing Gemini SDK:', err);
+if (isAiEnabled) {
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      console.log('Gemini API client initialized successfully server-side.');
+    } catch (err) {
+      console.error('Error initializing Gemini SDK:', err);
+    }
+  } else {
+    console.log('AI_ENABLED is true, but GEMINI_API_KEY not found in environment variables. Running in simulation mode.');
   }
 } else {
-  console.log('GEMINI_API_KEY not found in environment variables. Running in simulation mode.');
+  console.log('AI features are disabled via AI_ENABLED config. Skipping Gemini initialization.');
 }
 
 async function startServer() {
@@ -1535,85 +1541,91 @@ segment3.ts
   // ----------------------------------------------------
   // GEMINI AI PROXY CHAT & MODERATION ENDPOINTS
   // ----------------------------------------------------
-  app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
-    const { title, broadcaster } = req.body;
-    if (!title || !broadcaster) {
-      return res.status(400).json({ error: 'Title and broadcaster are required' });
-    }
+  if (isAiEnabled) {
+    app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
+      const { title, broadcaster } = req.body;
+      if (!title || !broadcaster) {
+        return res.status(400).json({ error: 'Title and broadcaster are required' });
+      }
 
-    if (!ai) {
-      // Simulate beautiful offline tags and description
-      const tags = ['Tech', 'Coding', 'LiveDev'];
-      const description = `Join ${broadcaster} live for "${title}"! Exploring cutting-edge implementations, active debugging, and clean architecture guides.`;
-      return res.json({ tags, description });
-    }
+      if (!ai) {
+        // Simulate beautiful offline tags and description
+        const tags = ['Tech', 'Coding', 'LiveDev'];
+        const description = `Join ${broadcaster} live for "${title}"! Exploring cutting-edge implementations, active debugging, and clean architecture guides.`;
+        return res.json({ tags, description });
+      }
 
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: `Based on a live stream titled "${title}" by ${broadcaster}, generate exactly 3 engaging metadata tags and a short catchy search-optimized description for a broadcaster dashboard. Output response strictly as a JSON object with keys "tags" (an array of 3 strings) and "description" (a catchy 1-2 sentence string).`,
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.5-flash',
+          contents: `Based on a live stream titled "${title}" by ${broadcaster}, generate exactly 3 engaging metadata tags and a short catchy search-optimized description for a broadcaster dashboard. Output response strictly as a JSON object with keys "tags" (an array of 3 strings) and "description" (a catchy 1-2 sentence string).`,
+          config: {
+            responseMimeType: "application/json"
+          }
+        });
 
-      const responseText = response.text || '';
-      res.json(JSON.parse(responseText));
-    } catch (err) {
-      console.error('AI analysis error:', err);
-      res.status(500).json({ error: 'AI processing failed' });
-    }
-  });
+        const responseText = response.text || '';
+        res.json(JSON.parse(responseText));
+      } catch (err) {
+        console.error('AI analysis error:', err);
+        res.status(500).json({ error: 'AI processing failed' });
+      }
+    });
 
-  app.post('/api/ai/thumbnail', authenticateToken, async (req, res) => {
-    const { title, broadcaster } = req.body;
-    if (!title || !broadcaster) {
-      return res.status(400).json({ error: 'Title and broadcaster are required' });
-    }
+    app.post('/api/ai/thumbnail', authenticateToken, async (req, res) => {
+      const { title, broadcaster } = req.body;
+      if (!title || !broadcaster) {
+        return res.status(400).json({ error: 'Title and broadcaster are required' });
+      }
 
-    // Return a random high-quality Unsplash image relevant to title or default picsum
-    const keywords = encodeURIComponent(title.split(' ').slice(0, 3).join(','));
-    const url = `https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80`;
-    res.json({ url });
-  });
+      // Return a random high-quality Unsplash image relevant to title or default picsum
+      const keywords = encodeURIComponent(title.split(' ').slice(0, 3).join(','));
+      const url = `https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80`;
+      res.json({ url });
+    });
 
-  app.post('/api/ai/moderator', authenticateToken, async (req, res) => {
-    const { chatHistory, lastMessage } = req.body;
-    if (!lastMessage) {
-      return res.status(400).json({ error: 'Message is required' });
-    }
+    app.post('/api/ai/moderator', authenticateToken, async (req, res) => {
+      const { chatHistory, lastMessage } = req.body;
+      if (!lastMessage) {
+        return res.status(400).json({ error: 'Message is required' });
+      }
 
-    if (!ai) {
-      // Offline fallback AI response
-      return res.json({
-        response: `[Auto-Mod] Welcome! Ensure your stream settings are optimal. Let's keep the discussion professional.`,
-        flagged: false,
-        reason: ''
-      });
-    }
+      if (!ai) {
+        // Offline fallback AI response
+        return res.json({
+          response: `[Auto-Mod] Welcome! Ensure your stream settings are optimal. Let's keep the discussion professional.`,
+          flagged: false,
+          reason: ''
+        });
+      }
 
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: `You are an expert AI live-stream moderator for ${chatHistory ? 'this history: ' + chatHistory : 'a new chat'}.
-        Analyze this new user message: "${lastMessage}".
-        Provide a response to help, answer, or moderate, and determine if it should be flagged (inappropriate/offensive).
-        Output response strictly as a JSON object with keys:
-        "response" (string, your message or warning to user),
-        "flagged" (boolean, true if offensive/spam),
-        "reason" (string, reason for flagging if any, or empty).`,
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.5-flash',
+          contents: `You are an expert AI live-stream moderator for ${chatHistory ? 'this history: ' + chatHistory : 'a new chat'}.
+          Analyze this new user message: "${lastMessage}".
+          Provide a response to help, answer, or moderate, and determine if it should be flagged (inappropriate/offensive).
+          Output response strictly as a JSON object with keys:
+          "response" (string, your message or warning to user),
+          "flagged" (boolean, true if offensive/spam),
+          "reason" (string, reason for flagging if any, or empty).`,
+          config: {
+            responseMimeType: "application/json"
+          }
+        });
 
-      const responseText = response.text || '';
-      res.json(JSON.parse(responseText));
-    } catch (err) {
-      console.error('AI Moderator error:', err);
-      res.status(500).json({ error: 'AI processing failed' });
-    }
-  });
+        const responseText = response.text || '';
+        res.json(JSON.parse(responseText));
+      } catch (err) {
+        console.error('AI Moderator error:', err);
+        res.status(500).json({ error: 'AI processing failed' });
+      }
+    });
+  } else {
+    app.use('/api/ai', (req, res) => {
+      res.status(503).json({ error: 'AI features are disabled' });
+    });
+  }
 
   // ----------------------------------------------------
   // RASPBERRY PI DEVICE MANAGEMENT & PAIRING ENDPOINTS
@@ -2448,9 +2460,32 @@ segment3.ts
     }
   });
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
+  const serverInstance = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`StreamPulse VPS Core listening on http://localhost:${PORT}`);
   });
+
+  const gracefulShutdown = async (signal: string) => {
+    console.log(`[Shutdown] Received ${signal}. Starting graceful shutdown...`);
+    serverInstance.close(async () => {
+      console.log('[Shutdown] HTTP server closed.');
+      try {
+        await db.close();
+      } catch (err) {
+        console.error('[Shutdown] Error closing database connections:', err);
+      }
+      console.log('[Shutdown] Process exiting.');
+      process.exit(0);
+    });
+
+    // Force close if it takes too long
+    setTimeout(() => {
+      console.error('[Shutdown] Force exiting after timeout...');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 startServer();
