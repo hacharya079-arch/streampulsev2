@@ -868,6 +868,86 @@ segment3.ts
   });
 
   // ----------------------------------------------------
+  // DYNAMIC ENDPOINT & PLAYBACK URL RESOLUTION SERVICES
+  // ----------------------------------------------------
+  let backendPublicIp: string | null = null;
+
+  async function detectPublicIp() {
+    if (backendPublicIp) return backendPublicIp;
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+      clearTimeout(id);
+      const data: any = await res.json();
+      if (data && data.ip) {
+        backendPublicIp = data.ip;
+        return data.ip;
+      }
+    } catch (e: any) {
+      console.warn('[Network Detection] Failed to fetch public IP:', e.message);
+    }
+    return null;
+  }
+
+  function getLocalIp() {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name] || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          return net.address;
+        }
+      }
+    }
+    return '127.0.0.1';
+  }
+
+  async function augmentStreamWithPlayback(s: any, req: any) {
+    if (!s) return null;
+    const publicIp = await detectPublicIp() || '154.12.88.2';
+    const localIp = getLocalIp();
+    const domain = process.env.DOMAIN || '';
+    
+    let activeEndpoint = publicIp;
+    if (domain) {
+      activeEndpoint = domain;
+    } else if (req && req.headers && req.headers.host) {
+      const host = req.headers.host.split(':')[0];
+      const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+      if (host !== 'localhost' && host !== '127.0.0.1' && !ipRegex.test(host)) {
+        activeEndpoint = host;
+      }
+    }
+    
+    if (activeEndpoint === publicIp && !backendPublicIp) {
+      activeEndpoint = localIp;
+    }
+
+    const portPart = req && req.headers && req.headers.host && req.headers.host.split(':')[1] ? `:${req.headers.host.split(':')[1]}` : '';
+    const finalHost = `${activeEndpoint}${portPart}`;
+    const proto = req && (req.secure || req.headers['x-forwarded-proto'] === 'https') ? 'https' : 'http';
+
+    return {
+      ...s,
+      playbackUrls: {
+        baseUrl: `${proto}://${finalHost}`,
+        master: `${proto}://${finalHost}/hls/${s.streamKey}/master.m3u8`,
+        p1080: `${proto}://${finalHost}/hls/${s.streamKey}/1080p/index.m3u8`,
+        p720: `${proto}://${finalHost}/hls/${s.streamKey}/720p/index.m3u8`,
+        p480: `${proto}://${finalHost}/hls/${s.streamKey}/480p/index.m3u8`,
+        p360: `${proto}://${finalHost}/hls/${s.streamKey}/360p/index.m3u8`,
+        dash: `${proto}://${finalHost}/dash/${s.streamKey}/manifest.mpd`,
+        embed: `${proto}://${finalHost}/player/${s.streamKey}`
+      }
+    };
+  }
+
+  async function augmentStreamsWithPlayback(streams: any[], req: any) {
+    if (!streams) return [];
+    return Promise.all(streams.map(s => augmentStreamWithPlayback(s, req)));
+  }
+
+  // ----------------------------------------------------
   // STREAM MANAGEMENT API ENDPOINTS
   // ----------------------------------------------------
   app.get('/api/streams', authenticateToken, async (req: any, res) => {
@@ -879,14 +959,56 @@ segment3.ts
 
       const streams = await db.getStreams();
       if (req.user.role === 'admin') {
-        res.json(streams);
+        const augmented = await augmentStreamsWithPlayback(streams, req);
+        res.json(augmented);
       } else {
         const filtered = streams.filter(s => s.id === dbUser.assigned_stream_id);
-        res.json(filtered);
+        const augmented = await augmentStreamsWithPlayback(filtered, req);
+        res.json(augmented);
       }
     } catch (err) {
       console.error('Error fetching streams:', err);
       res.status(500).json({ error: 'Failed to fetch streams' });
+    }
+  });
+
+  app.get('/api/network/details', authenticateToken, async (req: any, res: any) => {
+    try {
+      const publicIp = await detectPublicIp() || '154.12.88.2';
+      const localIp = getLocalIp();
+      const domain = process.env.DOMAIN || '';
+      
+      let activeEndpoint = publicIp;
+      let source = 'Detected Public IP';
+      
+      if (domain) {
+        activeEndpoint = domain;
+        source = 'Configured DOMAIN';
+      } else if (req.headers.host) {
+        const host = req.headers.host.split(':')[0];
+        const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+        if (host !== 'localhost' && host !== '127.0.0.1' && !ipRegex.test(host)) {
+          activeEndpoint = host;
+          source = 'Configured DOMAIN';
+        }
+      }
+      
+      if (activeEndpoint === publicIp && !backendPublicIp) {
+        activeEndpoint = localIp;
+        source = 'Detected Local IP';
+      }
+
+      res.json({
+        activeEndpoint,
+        source,
+        domain,
+        publicIp,
+        localIp,
+        port: req.headers.host?.split(':')[1] || ''
+      });
+    } catch (err) {
+      console.error('Error fetching network details:', err);
+      res.status(500).json({ error: 'Failed to retrieve network details' });
     }
   });
 
@@ -962,7 +1084,8 @@ segment3.ts
         profilesJson: req.body.profilesJson
       });
 
-      res.status(201).json(newStream);
+      const augmented = await augmentStreamWithPlayback(newStream, req);
+      res.status(201).json(augmented);
     } catch (err) {
       console.error('Create stream error:', err);
       res.status(500).json({ error: 'Failed to create stream' });
@@ -970,20 +1093,6 @@ segment3.ts
   });
 
   app.put('/api/streams/:id', authenticateToken, requireStreamOwnership, async (req: any, res) => {
-    const isChannelUser = req.user.role !== 'admin';
-    if (isChannelUser) {
-      const { title, broadcaster } = req.body;
-      try {
-        const stream = await db.updateStream(req.params.id, { title, broadcaster });
-        if (!stream) {
-          return res.status(404).json({ error: 'Stream not found' });
-        }
-        return res.json(stream);
-      } catch (err) {
-        return res.status(500).json({ error: 'Failed to update stream' });
-      }
-    }
-
     const { 
       resolution, width, height, fps, bitrate, videoCodec, audioCodec,
       gopSize, bufferSize, maxBitrate, audioVolume, audioSampleRate, audioDelay
@@ -1070,11 +1179,16 @@ segment3.ts
     }
 
     try {
-      const stream = await db.updateStream(req.params.id, req.body);
+      const updateData: any = { ...req.body };
+      // Delete customData if any or other non-existent fields that could fail
+      delete updateData.customData;
+      
+      const stream = await db.updateStream(req.params.id, updateData);
       if (!stream) {
         return res.status(404).json({ error: 'Stream not found' });
       }
-      res.json(stream);
+      const augmented = await augmentStreamWithPlayback(stream, req);
+      res.json(augmented);
     } catch (err) {
       res.status(500).json({ error: 'Failed to update stream' });
     }
@@ -1151,14 +1265,15 @@ segment3.ts
   });
 
   // Regenerate Stream Key
-  app.post('/api/streams/:id/regenerate', authenticateToken, requireAdmin, async (req, res) => {
+  app.post('/api/streams/:id/regenerate', authenticateToken, requireStreamOwnership, async (req, res) => {
     try {
       const newStreamKey = 'live_' + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
       const stream = await db.updateStream(req.params.id, { streamKey: newStreamKey });
       if (!stream) {
         return res.status(404).json({ error: 'Stream not found' });
       }
-      res.json(stream);
+      const augmented = await augmentStreamWithPlayback(stream, req);
+      res.json(augmented);
     } catch (err) {
       res.status(500).json({ error: 'Failed to regenerate stream key' });
     }
@@ -1179,7 +1294,8 @@ segment3.ts
       if (!stream) {
         return res.status(404).json({ error: 'Stream not found' });
       }
-      res.json(stream);
+      const augmented = await augmentStreamWithPlayback(stream, req);
+      res.json(augmented);
     } catch (err) {
       res.status(500).json({ error: 'Failed to toggle stream state' });
     }
@@ -1191,7 +1307,10 @@ segment3.ts
       return res.status(400).json({ error: 'Stream ID is required' });
     }
     if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Only administrators can enable streams' });
+      const dbUser = await db.getUserById(req.user.id);
+      if (!dbUser || dbUser.status === 'disabled' || dbUser.assigned_stream_id !== id) {
+        return res.status(403).json({ error: 'Access denied: You are not authorized to enable this stream' });
+      }
     }
 
     try {
@@ -1205,9 +1324,10 @@ segment3.ts
       const updatedStream = await db.updateStream(id, { status: 'offline' });
       
       // Save Enable log
-      await logStreamAction(id, stream.title, req.user.username, 'enable', req.ip || '0.0.0.0', 'Stream enabled by administrator');
+      await logStreamAction(id, stream.title, req.user.username, 'enable', req.ip || '0.0.0.0', 'Stream enabled by administrator/user');
 
-      res.json(updatedStream);
+      const augmented = await augmentStreamWithPlayback(updatedStream, req);
+      res.json(augmented);
     } catch (err) {
       console.error('Error enabling stream:', err);
       res.status(500).json({ error: 'Failed to enable stream' });
@@ -1219,7 +1339,10 @@ segment3.ts
       return res.status(400).json({ error: 'Stream ID is required' });
     }
     if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Only administrators can disable streams' });
+      const dbUser = await db.getUserById(req.user.id);
+      if (!dbUser || dbUser.status === 'disabled' || dbUser.assigned_stream_id !== id) {
+        return res.status(403).json({ error: 'Access denied: You are not authorized to disable this stream' });
+      }
     }
 
     try {
@@ -1239,9 +1362,10 @@ segment3.ts
       await stopStreamIngestAndHls(stream.streamKey);
 
       // Save Disable log
-      await logStreamAction(id, stream.title, req.user.username, 'disable', req.ip || '0.0.0.0', 'Stream disabled by administrator');
+      await logStreamAction(id, stream.title, req.user.username, 'disable', req.ip || '0.0.0.0', 'Stream disabled by administrator/user');
 
-      res.json(updatedStream);
+      const augmented = await augmentStreamWithPlayback(updatedStream, req);
+      res.json(augmented);
     } catch (err) {
       console.error('Error disabling stream:', err);
       res.status(500).json({ error: 'Failed to disable stream' });
@@ -1269,14 +1393,26 @@ segment3.ts
   });
 
   // GET Action logs
-  app.get('/api/system/logs', authenticateToken, requireAdmin, async (req: any, res) => {
+  app.get('/api/system/logs', authenticateToken, async (req: any, res) => {
     try {
-      const LOG_FILE = path.resolve('./data/stream_action_logs.json');
-      if (fs.existsSync(LOG_FILE)) {
-        const logs = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8'));
-        return res.json(logs);
+      const dbUser = await db.getUserById(req.user.id);
+      if (!dbUser || dbUser.status === 'disabled') {
+        return res.status(403).json({ error: 'Access denied: Account is disabled or invalid' });
       }
-      res.json([]);
+
+      const LOG_FILE = path.resolve('./data/stream_action_logs.json');
+      let logs = [];
+      if (fs.existsSync(LOG_FILE)) {
+        logs = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8'));
+      }
+
+      if (req.user.role === 'admin') {
+        return res.json(logs);
+      } else {
+        const assignedId = dbUser.assigned_stream_id;
+        const filtered = logs.filter((log: any) => log.streamId === assignedId);
+        return res.json(filtered);
+      }
     } catch (err) {
       console.error('Error fetching logs:', err);
       res.status(500).json({ error: 'Failed to fetch logs' });
@@ -1370,11 +1506,18 @@ segment3.ts
       return res.status(400).json({ error: 'streamKey query parameter is required' });
     }
 
-    const report: Record<string, { status: 'PASS' | 'FAIL' | 'WARN'; reason: string }> = {};
-
     try {
-      // 1. Verify Stream Key in Database
       const stream = await db.getStreamByKey(streamKey);
+      if (req.user.role !== 'admin') {
+        const dbUser = await db.getUserById(req.user.id);
+        if (!dbUser || dbUser.status === 'disabled' || !stream || dbUser.assigned_stream_id !== stream.id) {
+          return res.status(403).json({ error: 'Access denied: You are not authorized to test this stream' });
+        }
+      }
+
+      const report: Record<string, { status: 'PASS' | 'FAIL' | 'WARN'; reason: string }> = {};
+
+      // 1. Verify Stream Key in Database
       if (stream) {
         report['streamKey'] = { status: 'PASS', reason: `Stream key "${streamKey}" verified in database.` };
       } else {
@@ -1460,7 +1603,7 @@ segment3.ts
   // ----------------------------------------------------
   // VPS METRICS API ENDPOINT (Dynamic Server stats)
   // ----------------------------------------------------
-  app.get('/api/system/stats', authenticateToken, async (req, res) => {
+  app.get('/api/system/stats', authenticateToken, requireAdmin, async (req, res) => {
     try {
       const totalMem = os.totalmem();
       const freeMem = os.freemem();

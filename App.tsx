@@ -65,7 +65,8 @@ const App: React.FC = () => {
   
   const [detectedPublicIp, setDetectedPublicIp] = useState<string>('Detecting...');
   const [detectedLanIp, setDetectedLanIp] = useState<string>('Detecting...');
-  const [manualIp, setManualIp] = useState<string>('');
+  const [manualIp, setManualIp] = useState<string>(() => localStorage.getItem('streampulse_manual_ip') || '');
+  const [customDomain, setCustomDomain] = useState<string>(() => localStorage.getItem('streampulse_custom_domain') || '');
   const [creationIpMode, setCreationIpMode] = useState<IPMode>('auto');
   const [confirmRemovalId, setConfirmRemovalId] = useState<string | null>(null);
   const [actionLogs, setActionLogs] = useState<any[]>([]);
@@ -132,6 +133,7 @@ const App: React.FC = () => {
   const [editStatus, setEditStatus] = useState<'enabled' | 'disabled'>('enabled');
   const [editAssignedStreamId, setEditAssignedStreamId] = useState('');
   const [viewingHistoryUser, setViewingHistoryUser] = useState<any | null>(null);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Infrapage config tab states
   const [selectedFileKey, setSelectedFileKey] = useState<'docker-compose' | 'nginx' | 'nginx-rtmp' | 'transcode' | 'schema'>('docker-compose');
@@ -268,16 +270,56 @@ CREATE TABLE IF NOT EXISTS streams (
 );`
   };
 
+  useEffect(() => {
+    localStorage.setItem('streampulse_manual_ip', manualIp);
+  }, [manualIp]);
+
+  useEffect(() => {
+    localStorage.setItem('streampulse_custom_domain', customDomain);
+  }, [customDomain]);
+
   const MIN_SCHEDULE_DATE = '2026-01-01';
   const MAX_SCHEDULE_DATE = '2027-12-31';
 
   const getEffectiveIp = (mode: IPMode) => {
+    if (customDomain && customDomain.trim() !== '') {
+      return customDomain.trim();
+    }
     switch (mode) {
       case 'lan': return detectedLanIp;
       case 'loopback': return '127.0.0.1';
       case 'manual': return manualIp || '0.0.0.0';
       default: return detectedPublicIp;
     }
+  };
+
+  const getSelectedEndpoint = () => {
+    if (customDomain && customDomain.trim() !== '') {
+      return { endpoint: customDomain.trim(), source: 'Configured DOMAIN' };
+    }
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname;
+      const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+      if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && !ipRegex.test(hostname)) {
+        return { endpoint: hostname, source: 'Configured DOMAIN' };
+      }
+    }
+    if (manualIp && manualIp.trim() !== '' && manualIp !== '0.0.0.0') {
+      return { endpoint: manualIp.trim(), source: 'Manual Override IP' };
+    }
+    if (detectedPublicIp && detectedPublicIp !== 'Detecting...' && detectedPublicIp !== '154.12.88.2') {
+      return { endpoint: detectedPublicIp, source: 'Detected Public IP' };
+    }
+    if (detectedLanIp && detectedLanIp !== 'Detecting...' && detectedLanIp !== '192.168.1.100') {
+      return { endpoint: detectedLanIp, source: 'Detected Local IP' };
+    }
+    if (detectedPublicIp && detectedPublicIp !== 'Detecting...') {
+      return { endpoint: detectedPublicIp, source: 'Detected Public IP' };
+    }
+    if (detectedLanIp && detectedLanIp !== 'Detecting...') {
+      return { endpoint: detectedLanIp, source: 'Detected Local IP' };
+    }
+    return { endpoint: '154.12.88.2', source: 'Public IP (Default)' };
   };
 
   // Auth APIs
@@ -1333,18 +1375,19 @@ CREATE TABLE IF NOT EXISTS streams (
                         onEdit={(updated) => handleEditStream(stream.id, updated)}
                         onCloneProfile={(config) => handleCloneProfile(stream.id, config)}
                         isAdmin={currentUser?.role === 'admin'}
+                        activeEndpoint={getSelectedEndpoint()}
                       />
                     ))}
                   </div>
                 )}
               </section>
 
-              {/* Administrator Audit Log */}
-              {currentUser?.role === 'admin' && (
+              {/* Activity Log */}
+              {currentUser && (
                 <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-zinc-400" /> Administrator Audit Logs
+                      <FileText className="w-5 h-5 text-zinc-400" /> {currentUser?.role === 'admin' ? 'Administrator Audit Logs' : 'Channel Activity Logs'}
                     </h3>
                     <button 
                       onClick={fetchActionLogs}
@@ -1474,13 +1517,33 @@ CREATE TABLE IF NOT EXISTS streams (
                     </button>
                   </h3>
 
+                  <div className="mb-4">
+                    <input 
+                      type="text"
+                      placeholder="Search users by username or email..."
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 placeholder-zinc-500"
+                    />
+                  </div>
+
                   {usersLoading ? (
                     <div className="p-8 text-center text-zinc-500">Loading directory...</div>
                   ) : usersList.length === 0 ? (
                     <div className="p-8 text-center text-zinc-500">No channel users found.</div>
+                  ) : usersList.filter(u => 
+                      u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) || 
+                      u.email.toLowerCase().includes(userSearchQuery.toLowerCase())
+                    ).length === 0 ? (
+                    <div className="p-8 text-center text-zinc-500">No matching users found.</div>
                   ) : (
                     <div className="space-y-4">
-                      {usersList.map((user) => {
+                      {usersList
+                        .filter(u => 
+                          u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) || 
+                          u.email.toLowerCase().includes(userSearchQuery.toLowerCase())
+                        )
+                        .map((user) => {
                         const assignedStream = streams.find(s => s.id === user.assigned_stream_id);
                         const isEditing = editingUserId === user.id;
 
@@ -1655,6 +1718,7 @@ CREATE TABLE IF NOT EXISTS streams (
                     onEdit={(updated) => handleEditStream(stream.id, updated)}
                     onCloneProfile={(config) => handleCloneProfile(stream.id, config)}
                     isAdmin={true}
+                    activeEndpoint={getSelectedEndpoint()}
                   />
                 ))}
               </div>
@@ -1786,12 +1850,22 @@ CREATE TABLE IF NOT EXISTS streams (
                          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 text-xs sm:text-sm font-mono text-blue-400 truncate">{detectedPublicIp}</div>
                       </div>
                       <div className="space-y-3">
+                         <label className="text-[10px] font-bold text-zinc-500 uppercase">Domain Override</label>
+                         <input 
+                            type="text" value={customDomain} onChange={(e) => setCustomDomain(e.target.value)}
+                            placeholder="e.g. broadcast.domain.com"
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm font-mono text-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/30"
+                         />
+                         <span className="text-[9px] text-zinc-500 font-medium block">If set, this custom domain takes highest priority for all playback, ingest, and OBS configuration URLs.</span>
+                      </div>
+                      <div className="space-y-3">
                          <label className="text-[10px] font-bold text-zinc-500 uppercase">IP Override</label>
                          <input 
                             type="text" value={manualIp} onChange={(e) => setManualIp(e.target.value)}
                             placeholder="e.g. 154.12.88.2"
                             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm font-mono text-amber-400 outline-none focus:ring-2 focus:ring-amber-500/30"
                          />
+                         <span className="text-[9px] text-zinc-500 font-medium block">Alternative raw IP override for direct access bypasses.</span>
                       </div>
                     </div>
                   </div>
@@ -1827,6 +1901,10 @@ CREATE TABLE IF NOT EXISTS streams (
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'dashboard' ? 'text-blue-500' : 'text-zinc-500'}`}>
           <LayoutDashboard className="w-5 h-5" />
           <span className="text-[9px] font-bold uppercase">Admin</span>
+        </button>
+        <button onClick={() => setActiveTab('users')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'users' ? 'text-blue-500' : 'text-zinc-500'}`}>
+          <Users className="w-5 h-5" />
+          <span className="text-[9px] font-bold uppercase">Users</span>
         </button>
         <button onClick={() => setActiveTab('devices')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'devices' ? 'text-blue-500' : 'text-zinc-500'}`}>
           <Monitor className="w-5 h-5" />

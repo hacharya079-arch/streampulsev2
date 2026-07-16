@@ -211,7 +211,7 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams }) 
             }
           }
         } catch (err) {
-          console.error('[Dashboard WS] Error parsing message:', err);
+          console.warn('[Dashboard WS] Error parsing message:', err);
         }
       };
 
@@ -221,7 +221,7 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams }) 
       };
 
       ws.onerror = (err) => {
-        console.error('[Dashboard WS] Error:', err);
+        console.warn('[Dashboard WS] Error (handled via fallback polling):', err);
       };
     };
 

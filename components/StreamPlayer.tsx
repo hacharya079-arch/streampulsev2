@@ -64,6 +64,7 @@ interface StreamPlayerProps {
   onEdit?: (updated: Partial<StreamSession>) => void;
   onCloneProfile?: (config: Partial<StreamSession>) => void;
   isAdmin?: boolean;
+  activeEndpoint?: { endpoint: string; source: string };
 }
 
 const getResolutionPreset = (resolution: string) => {
@@ -110,7 +111,8 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   onDisable,
   onEdit,
   onCloneProfile,
-  isAdmin = true
+  isAdmin = true,
+  activeEndpoint
 }) => {
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
@@ -959,8 +961,16 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   const rtmpPlayback = `${stream.rtmpUrl}/${stream.streamKey}`;
   const baseHttp = stream.rtmpUrl.replace('rtmp://', 'http://').split('/')[0];
   
-  // Dynamically resolve hostname & protocol so playback works flawlessly inside iframe / custom hostnames
-  const currentHost = typeof window !== 'undefined' ? window.location.host : baseHttp;
+  // Dynamically resolve hostname & protocol based on selected active endpoint priority
+  const endpointDetails = activeEndpoint || {
+    endpoint: typeof window !== 'undefined' ? window.location.hostname : baseHttp,
+    source: 'Detected Hostname'
+  };
+  const activeEndpointVal = endpointDetails.endpoint;
+  const activeEndpointSource = endpointDetails.source;
+  
+  const portPart = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
+  const currentHost = activeEndpointVal.includes(':') ? activeEndpointVal : `${activeEndpointVal}${portPart}`;
   const currentProto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
   
   const hlsUrl = `${currentProto}//${currentHost}/hls/${stream.streamKey}/master.m3u8`;
@@ -1207,7 +1217,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     }
   }, [stream.status, stream.scheduledStart]);
 
-  const copyToClipboard = (text: string, type: 'url' | 'key' | 'rtmp' | 'hls' | 'dash' | 'embed' | 'vlc' | 'videojs') => {
+  const copyToClipboard = (text: string, type: 'url' | 'key' | 'rtmp' | 'hls' | 'dash' | 'embed' | 'vlc' | 'videojs' | 'p1080' | 'p720' | 'p480' | 'p360') => {
     navigator.clipboard.writeText(text);
     if (type === 'url') {
       setCopiedUrl(true);
@@ -3117,6 +3127,49 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 </div>
                 )}
 
+                {/* Live Playback Engine Monitoring Panel */}
+                <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Wifi className="w-3.5 h-3.5" /> Live Playback Engine
+                    </h4>
+                    <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1 rounded font-mono font-bold uppercase">Dynamic Detection</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
+                      <span className="text-zinc-500 block text-[8px] font-bold uppercase">Active Endpoint</span>
+                      <span className="font-mono text-emerald-400 font-bold truncate block" title={activeEndpointVal}>{activeEndpointVal}</span>
+                    </div>
+                    <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
+                      <span className="text-zinc-500 block text-[8px] font-bold uppercase">Endpoint Source</span>
+                      <span className="text-zinc-300 font-medium truncate block">{activeEndpointSource}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
+                      <span className="text-zinc-500 block text-[8px] font-bold uppercase">Stream Status</span>
+                      <span className={`font-bold capitalize flex items-center gap-1 ${stream.status === 'live' ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${stream.status === 'live' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
+                        {stream.status}
+                      </span>
+                    </div>
+                    <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
+                      <span className="text-zinc-500 block text-[8px] font-bold uppercase">Player Status</span>
+                      <span className={`font-bold capitalize flex items-center gap-1 ${isPlaying && stream.status === 'live' ? 'text-blue-400' : 'text-zinc-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${isPlaying && stream.status === 'live' ? 'bg-blue-500 animate-pulse' : 'bg-zinc-500'}`} />
+                        {stream.status !== 'live' ? 'Disabled (Offline)' : isPlaying ? 'Active Playing' : 'Ready to Load'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1 text-[10px]">
+                    <span className="text-zinc-500 block text-[8px] font-bold uppercase">Playback Base URL</span>
+                    <code className="text-zinc-400 font-mono truncate block select-all">{`${currentProto}//${currentHost}`}</code>
+                  </div>
+                </div>
+
                 {/* RTMP Row */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center px-1">
@@ -3162,6 +3215,32 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                           {copiedPlayback === 'hls' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                         </button>
                       </div>
+                  </div>
+                </div>
+
+                {/* Variant HLS Playlists */}
+                <div className="space-y-1.5 bg-zinc-900/20 p-2.5 rounded-xl border border-zinc-800/40">
+                  <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-wider block px-1">Variant Playlists (Adaptive bitrates)</span>
+                  <div className="space-y-2">
+                    {[
+                      { label: '1080p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/1080p/index.m3u8`, key: 'p1080' },
+                      { label: '720p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/720p/index.m3u8`, key: 'p720' },
+                      { label: '480p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/480p/index.m3u8`, key: 'p480' },
+                      { label: '360p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/360p/index.m3u8`, key: 'p360' },
+                    ].map(variant => (
+                      <div key={variant.key} className="flex items-center justify-between text-[9px] bg-black/40 p-1.5 rounded border border-zinc-800/50">
+                        <div className="flex items-center gap-1.5 truncate mr-2 flex-1">
+                          <span className="text-[7px] font-bold bg-zinc-800 text-zinc-400 px-1 rounded uppercase shrink-0">{variant.key.slice(1)}</span>
+                          <code className="text-zinc-400 truncate font-mono select-all flex-1">{variant.url}</code>
+                        </div>
+                        <button 
+                          onClick={() => copyToClipboard(variant.url, variant.key as any)} 
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer shrink-0 animate-in"
+                        >
+                          {copiedPlayback === variant.key ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
