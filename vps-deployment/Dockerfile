@@ -63,8 +63,6 @@ COPY <<-"EOF" /app/entrypoint.sh
 #!/bin/bash
 # Start Nginx in background
 nginx -c /etc/nginx/nginx.conf &
-# Start RTMP Nginx module in background
-nginx -c /etc/nginx/nginx-rtmp.conf &
 # Start StreamPulse Node server in foreground
 npm run start
 EOF

@@ -761,18 +761,71 @@ generate_nginx_conf() {
     local mode=$1
     local target=$2
 
+    # Detect final base image from Dockerfile to choose the correct user and PID path
+    local base_image=""
+    if [ -f "$SCRIPT_DIR/Dockerfile" ]; then
+        base_image=$(grep -Ei '^FROM ' "$SCRIPT_DIR/Dockerfile" | tail -n 1 | awk '{print $2}' || echo "")
+    fi
+
+    local nginx_user="www-data"
+    local nginx_pid="/run/nginx.pid"
+
+    if [[ "$base_image" =~ alpine ]]; then
+        nginx_user="nginx"
+        nginx_pid="/var/run/nginx.pid"
+    elif [[ "$base_image" =~ ubuntu ]] || [[ "$base_image" =~ debian ]]; then
+        nginx_user="www-data"
+        nginx_pid="/run/nginx.pid"
+    else
+        nginx_user="www-data"
+        nginx_pid="/run/nginx.pid"
+    fi
+
     if [[ "$mode" == "domain" ]]; then
         log_info "Generating Domain-based Nginx configuration for $target..."
         cat <<EOF > "$SCRIPT_DIR/nginx.conf"
 # StreamPulse Nginx Reverse Proxy and HTTP Server Config
 
-user nginx;
+user $nginx_user;
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
+pid $nginx_pid;
+
+# Load dynamic modules on Ubuntu
+include /etc/nginx/modules-enabled/*.conf;
 
 events {
     worker_connections 1024;
+}
+
+# Unified RTMP Configuration
+rtmp {
+    server {
+        listen 1935; # Standard RTMP port
+        chunk_size 4096;
+
+        # Primary Live Stream application
+        application live {
+            live on;
+            record off;
+
+            # Hand over incoming RTMP stream to FFmpeg for dynamic Multi-Bitrate HLS Transcoding
+            # This triggers the custom transcode script to generate 1080p, 720p, 480p, and 360p HLS playlists
+            exec_push /usr/local/bin/transcode.sh \$name;
+        }
+
+        # Raw ingest application (optional, if you want direct playback without transcoding)
+        application raw {
+            live on;
+            record off;
+            
+            # Enable HLS generation for raw input directly
+            hls on;
+            hls_path /var/www/hls/raw;
+            hls_fragment 3;
+            hls_playlist_length 60;
+        }
+    }
 }
 
 http {
@@ -879,13 +932,46 @@ EOF
         cat <<EOF > "$SCRIPT_DIR/nginx.conf"
 # StreamPulse Nginx Reverse Proxy and HTTP Server Config
 
-user nginx;
+user $nginx_user;
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
+pid $nginx_pid;
+
+# Load dynamic modules on Ubuntu
+include /etc/nginx/modules-enabled/*.conf;
 
 events {
     worker_connections 1024;
+}
+
+# Unified RTMP Configuration
+rtmp {
+    server {
+        listen 1935; # Standard RTMP port
+        chunk_size 4096;
+
+        # Primary Live Stream application
+        application live {
+            live on;
+            record off;
+
+            # Hand over incoming RTMP stream to FFmpeg for dynamic Multi-Bitrate HLS Transcoding
+            # This triggers the custom transcode script to generate 1080p, 720p, 480p, and 360p HLS playlists
+            exec_push /usr/local/bin/transcode.sh \$name;
+        }
+
+        # Raw ingest application (optional, if you want direct playback without transcoding)
+        application raw {
+            live on;
+            record off;
+            
+            # Enable HLS generation for raw input directly
+            hls on;
+            hls_path /var/www/hls/raw;
+            hls_fragment 3;
+            hls_playlist_length 60;
+        }
+    }
 }
 
 http {
@@ -904,10 +990,10 @@ http {
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 
-    # HTTP Server for Public IP
+    # HTTP Server for Public IP / Local IP / Domain
     server {
-        listen 80;
-        server_name $target;
+        listen 80 default_server;
+        server_name _;
 
         # Frontend SPA Serving
         location / {
@@ -972,9 +1058,73 @@ else
     log_success "Detected Public IP: $PUBLIC_IP"
 fi
 
+# --- Deployment-Aware Endpoint Selection ---
+IS_LOCAL_ENV=false
+VIRT_TYPE="none"
+if command -v systemd-detect-virt &>/dev/null; then
+    VIRT_TYPE=$(systemd-detect-virt 2>/dev/null || echo "none")
+fi
+
+PRODUCT_NAME=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo "")
+SYS_VENDOR=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo "")
+
+if [[ "$VIRT_TYPE" == "oracle" || "$VIRT_TYPE" == "vmware" ]] || \
+   [[ "$PRODUCT_NAME" =~ [Vv]irtual[Bb]ox || "$PRODUCT_NAME" =~ [Vv]mware || "$PRODUCT_NAME" =~ [Vv][Mm]ware ]] || \
+   [[ "$SYS_VENDOR" =~ [Vv]irtual[Bb]ox || "$SYS_VENDOR" =~ [Vv]mware || "$SYS_VENDOR" =~ [Vv][Mm]ware ]]; then
+    IS_LOCAL_ENV=true
+fi
+
+DEFAULT_IFACE=$(ip route show default 2>/dev/null | grep -oP 'dev \K\S+' | head -n 1 || echo "")
+DEFAULT_IP=""
+if [[ -n "$DEFAULT_IFACE" ]]; then
+    DEFAULT_IP=$(ip -4 addr show dev "$DEFAULT_IFACE" 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -n 1 || echo "")
+    if [[ "$DEFAULT_IP" =~ ^192\.168\. ]] || [[ "$DEFAULT_IP" =~ ^10\. ]] || [[ "$DEFAULT_IP" =~ ^172\.(16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)\. ]]; then
+        if [[ "$DEFAULT_IP" =~ ^192\.168\. ]] || [ "$IS_LOCAL_ENV" = true ]; then
+            IS_LOCAL_ENV=true
+        fi
+    fi
+fi
+
+get_local_lan_ip() {
+    if [[ -n "${DEFAULT_IP:-}" ]] && [[ "$DEFAULT_IP" =~ ^192\.168\. || "$DEFAULT_IP" =~ ^10\. || "$DEFAULT_IP" =~ ^172\.(16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)\. ]]; then
+        if ! [[ "$DEFAULT_IP" =~ ^172\.(17|18|19)\. ]]; then
+            echo "$DEFAULT_IP"
+            return 0
+        fi
+    fi
+    local ips
+    ips=$(hostname -I 2>/dev/null || ip addr show | grep -oP 'inet \K[\d.]+')
+    for ip in $ips; do
+        if [[ "$ip" =~ ^127\. ]] || [[ "$ip" =~ ^172\.(17|18|19)\. ]]; then
+            continue
+        fi
+        if [[ "$ip" =~ ^192\.168\. ]] || [[ "$ip" =~ ^10\. ]] || [[ "$ip" =~ ^172\. ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    echo "${DEFAULT_IP:-127.0.0.1}"
+}
+
+# Select primary endpoint based on deployment environment
+if [ "$IS_LOCAL_ENV" = true ]; then
+    LOCAL_LAN_IP=$(get_local_lan_ip)
+    log_info "Local deployment environment detected (VirtualBox/VMware/Local Network)."
+    log_info "Automatically selected Local LAN IP: $LOCAL_LAN_IP"
+    TARGET_ENDPOINT="$LOCAL_LAN_IP"
+else
+    log_info "Public VPS environment detected."
+    log_info "Automatically selected Public IP: $PUBLIC_IP"
+    TARGET_ENDPOINT="$PUBLIC_IP"
+fi
+
 echo -e "${YELLOW}Select StreamPulse Deployment Mode:${NC}"
 echo -e "1) Domain Mode (Configure Let's Encrypt SSL & HTTPS)"
-echo -e "2) Public IP Mode (Skip SSL, use standard HTTP on Public IP)"
+if [ "$IS_LOCAL_ENV" = true ]; then
+    echo -e "2) Local LAN IP Mode (Skip SSL, use standard HTTP on Local LAN IP)"
+else
+    echo -e "2) Public IP Mode (Skip SSL, use standard HTTP on Public IP)"
+fi
 echo -e -n "${YELLOW}[PROMPT] Choose an option [1-2]: ${NC}"
 
 if [[ -t 0 ]]; then
@@ -1018,8 +1168,12 @@ if [[ "$DEPLOY_MODE" == "1" ]]; then
 fi
 
 if [[ "$DEPLOY_MODE" == "2" ]]; then
-    log_info "Configuring Public IP Mode..."
-    generate_nginx_conf "ip" "$PUBLIC_IP"
+    if [ "$IS_LOCAL_ENV" = true ]; then
+        log_info "Configuring Local LAN IP Mode..."
+    else
+        log_info "Configuring Public IP Mode..."
+    fi
+    generate_nginx_conf "ip" "$TARGET_ENDPOINT"
 fi
 
 # --- 6. Bootstrap Containers via Docker Compose ---
@@ -1118,10 +1272,11 @@ if [[ "$DEPLOY_MODE" == "1" ]]; then
     log_info "Dashboard URL:  https://$DOMAIN_NAME"
     log_info "API Base URL:   https://$DOMAIN_NAME/api"
     log_info "Playback URL:   https://$DOMAIN_NAME/hls/{stream_key}/index.m3u8"
+    log_info "Stream Ingest RTMP URL: rtmp://$DOMAIN_NAME/live"
 else
-    log_info "Dashboard URL:  http://$PUBLIC_IP"
-    log_info "API Base URL:   http://$PUBLIC_IP/api"
-    log_info "Playback URL:   http://$PUBLIC_IP/hls/{stream_key}/index.m3u8"
+    log_info "Dashboard URL:  http://$TARGET_ENDPOINT"
+    log_info "API Base URL:   http://$TARGET_ENDPOINT/api"
+    log_info "Playback URL:   http://$TARGET_ENDPOINT/hls/{stream_key}/index.m3u8"
+    log_info "Stream Ingest RTMP URL: rtmp://$TARGET_ENDPOINT/live"
 fi
-log_info "Stream Ingest RTMP URL: rtmp://$PUBLIC_IP/live"
 log_info "======================================================================="

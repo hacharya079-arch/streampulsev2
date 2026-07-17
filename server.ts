@@ -6,7 +6,6 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { exec, spawn } from 'child_process';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './server/db.ts';
 import { createServer } from 'http';
@@ -2518,6 +2517,8 @@ segment3.ts
   // VITE DEV SERVER VS PRODUCTION SERVING
   // ----------------------------------------------------
   if (process.env.NODE_ENV !== 'production') {
+    const viteMod = 'vite';
+    const { createServer: createViteServer } = await import(viteMod);
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -2526,7 +2527,7 @@ segment3.ts
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
