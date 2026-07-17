@@ -69,6 +69,7 @@ const App: React.FC = () => {
   const [customDomain, setCustomDomain] = useState<string>(() => localStorage.getItem('streampulse_custom_domain') || '');
   const [creationIpMode, setCreationIpMode] = useState<IPMode>('auto');
   const [confirmRemovalId, setConfirmRemovalId] = useState<string | null>(null);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<number | null>(null);
   const [actionLogs, setActionLogs] = useState<any[]>([]);
 
   const [stats, setStats] = useState<any>({
@@ -536,20 +537,25 @@ CREATE TABLE IF NOT EXISTS streams (
   };
 
   const handleDeleteUser = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this channel user? This action is irreversible, but will preserve all channels, streams, and activity logs.')) return;
+    console.log(`[DELETE WORKFLOW] handleDeleteUser executed for user ID: ${id}`);
     setUsersError(null);
     try {
+      console.log(`[DELETE WORKFLOW] Dispatching DELETE request to /api/users/${id}`);
       const res = await fetch(`/api/users/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      console.log(`[DELETE WORKFLOW] Received response status: ${res.status}`);
       if (res.ok) {
+        console.log(`[DELETE WORKFLOW] Deletion successful! Refreshing user list...`);
         fetchUsers();
       } else {
         const data = await res.json();
+        console.error(`[DELETE WORKFLOW] Deletion failed:`, data.error);
         setUsersError(data.error || 'Failed to delete user');
       }
     } catch (err) {
+      console.error(`[DELETE WORKFLOW] Network error during user deletion:`, err);
       setUsersError('Network error while deleting user');
     }
   };
@@ -1586,7 +1592,11 @@ CREATE TABLE IF NOT EXISTS streams (
                                   Edit
                                 </button>
                                 <button 
-                                  onClick={() => handleDeleteUser(user.id)}
+                                  onClick={() => {
+                                    console.log(`[DELETE WORKFLOW] Delete button clicked for user: ${user.username} (ID: ${user.id})`);
+                                    console.log(`[DELETE WORKFLOW] Opening custom confirmation dialog...`);
+                                    setConfirmDeleteUserId(user.id);
+                                  }}
                                   disabled={user.id === currentUser?.id}
                                   title={user.id === currentUser?.id ? "You cannot delete your own logged-in account" : "Delete user account"}
                                   className="px-2.5 py-1 text-xs bg-red-950/40 hover:bg-red-900/30 text-red-400 border border-red-900/20 font-bold rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
@@ -1975,6 +1985,41 @@ CREATE TABLE IF NOT EXISTS streams (
               </div>
             </div>
             <button onClick={() => setConfirmRemovalId(null)} className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteUserId !== null && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm" onClick={() => {
+            console.log(`[DELETE WORKFLOW] Confirmation backdrop clicked. Closing modal.`);
+            setConfirmDeleteUserId(null);
+          }} />
+          <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md p-6 sm:p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex flex-col items-center text-center">
+              <div className="p-4 bg-red-600/20 rounded-full mb-6">
+                <AlertTriangle className="w-8 h-8 sm:w-10 sm:h-10 text-red-500" />
+              </div>
+              <h3 className="text-xl font-bold mb-2">Delete User?</h3>
+              <p className="text-zinc-400 text-sm mb-8">
+                Are you sure you want to delete <span className="text-zinc-100 font-bold">@{usersList.find(u => u.id === confirmDeleteUserId)?.username}</span>? This action is irreversible, but will preserve all channels, streams, and activity logs.
+              </p>
+              <div className="flex gap-3 w-full">
+                <button onClick={() => {
+                  console.log(`[DELETE WORKFLOW] Cancel clicked. Closing modal.`);
+                  setConfirmDeleteUserId(null);
+                }} className="flex-1 px-4 py-3 bg-zinc-800 text-zinc-100 font-bold rounded-xl">Cancel</button>
+                <button onClick={() => {
+                  console.log(`[DELETE WORKFLOW] Confirm delete clicked for user ID: ${confirmDeleteUserId}`);
+                  handleDeleteUser(confirmDeleteUserId);
+                  setConfirmDeleteUserId(null);
+                }} className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-xl">Delete</button>
+              </div>
+            </div>
+            <button onClick={() => {
+              console.log(`[DELETE WORKFLOW] Close icon clicked. Closing modal.`);
+              setConfirmDeleteUserId(null);
+            }} className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
           </div>
         </div>
       )}
