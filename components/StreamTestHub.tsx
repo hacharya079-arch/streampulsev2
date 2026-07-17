@@ -22,9 +22,10 @@ import { StreamSession } from '../types';
 
 interface StreamTestHubProps {
   streams: StreamSession[];
+  activeEndpoint?: { endpoint: string; source: string };
 }
 
-export const StreamTestHub: React.FC<StreamTestHubProps> = ({ streams }) => {
+export const StreamTestHub: React.FC<StreamTestHubProps> = ({ streams, activeEndpoint }) => {
   const [selectedStreamId, setSelectedStreamId] = useState<string>('');
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditReport, setAuditReport] = useState<any>(null);
@@ -268,9 +269,17 @@ export const StreamTestHub: React.FC<StreamTestHubProps> = ({ streams }) => {
     }
   }, [streams, selectedStreamId]);
 
-  // Derive alternative URLs
-  const baseHttp = selectedStream ? selectedStream.rtmpUrl.replace('rtmp://', 'http://').split('/')[0] : 'localhost:3000';
-  const currentHost = typeof window !== 'undefined' ? window.location.host : baseHttp;
+  // Derive alternative URLs using dynamic endpoint selection
+  const baseHttp = selectedStream ? selectedStream.rtmpUrl.replace('rtmp://', 'http://').split('/')[0] : '154.12.88.2';
+  
+  const endpointDetails = activeEndpoint || {
+    endpoint: typeof window !== 'undefined' ? window.location.hostname : baseHttp,
+    source: 'Detected Hostname'
+  };
+  const activeEndpointVal = endpointDetails.endpoint;
+  
+  const portPart = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
+  const currentHost = activeEndpointVal.includes(':') ? activeEndpointVal : `${activeEndpointVal}${portPart}`;
   const currentProto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
 
   const hlsUrl = selectedStream ? `${currentProto}//${currentHost}/hls/${selectedStream.streamKey}/master.m3u8` : '';

@@ -731,6 +731,7 @@ segment3.ts
   });
 
   // ----------------------------------------------------
+  // ----------------------------------------------------
   // USER MANAGEMENT API ENDPOINTS (ADMIN ONLY)
   // ----------------------------------------------------
   app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
@@ -744,7 +745,8 @@ segment3.ts
         created_at: u.created_at,
         status: u.status || 'enabled',
         assigned_stream_id: u.assigned_stream_id || null,
-        login_history: u.login_history || null
+        login_history: u.login_history || null,
+        display_name: u.display_name || null
       }));
       res.json(sanitized);
     } catch (err) {
@@ -754,9 +756,19 @@ segment3.ts
   });
 
   app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-    const { username, email, password, assigned_stream_id } = req.body;
+    const { username, email, password, assigned_stream_id, role, display_name } = req.body;
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'Username, email, and password are required' });
+    }
+
+    if (username.length < 3) {
+      return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+    }
+    if (!email.includes('@')) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
     }
 
     try {
@@ -768,21 +780,35 @@ segment3.ts
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(password, salt);
 
-      const newUser = await db.createUser(username, email, passwordHash, 'user');
+      const userRole = (role === 'admin' || role === 'user') ? role : 'user';
+      const newUser = await db.createUser(username, email, passwordHash, userRole);
       
+      const updates: Partial<any> = {};
       if (assigned_stream_id) {
-        await db.updateUser(newUser.id, { assigned_stream_id });
-        newUser.assigned_stream_id = assigned_stream_id;
+        updates.assigned_stream_id = assigned_stream_id;
+      }
+      if (display_name) {
+        updates.display_name = display_name;
+      } else {
+        updates.display_name = username;
       }
 
+      if (Object.keys(updates).length > 0) {
+        await db.updateUser(newUser.id, updates);
+      }
+
+      const finalUser = await db.getUserById(newUser.id);
+      const rUser = finalUser || newUser;
+
       res.status(201).json({
-        id: newUser.id,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role,
-        created_at: newUser.created_at,
-        status: newUser.status || 'enabled',
-        assigned_stream_id: newUser.assigned_stream_id || null
+        id: rUser.id,
+        username: rUser.username,
+        email: rUser.email,
+        role: rUser.role,
+        created_at: rUser.created_at,
+        status: rUser.status || 'enabled',
+        assigned_stream_id: rUser.assigned_stream_id || null,
+        display_name: rUser.display_name || rUser.username
       });
     } catch (err) {
       console.error('Error creating user:', err);
@@ -796,7 +822,7 @@ segment3.ts
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
-    const { username, email, password, status, assigned_stream_id } = req.body;
+    const { username, email, password, status, assigned_stream_id, role, display_name } = req.body;
 
     try {
       const user = await db.getUserById(userId);
@@ -805,28 +831,72 @@ segment3.ts
       }
 
       const updates: Partial<any> = {};
-      if (username) {
+      if (username !== undefined) {
+        if (!username || username.trim().length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+        }
         const other = await db.getUserByUsername(username);
         if (other && other.id !== userId) {
           return res.status(400).json({ error: 'Username already in use' });
         }
         updates.username = username;
       }
-      if (email) {
+      if (email !== undefined) {
+        if (!email || !email.includes('@')) {
+          return res.status(400).json({ error: 'Please enter a valid email address' });
+        }
         updates.email = email;
       }
       if (password) {
+        if (password.length < 6) {
+          return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+        }
         const salt = await bcrypt.genSalt(10);
         updates.password_hash = await bcrypt.hash(password, salt);
       }
-      if (status) {
+      if (status !== undefined) {
         if (status !== 'enabled' && status !== 'disabled') {
           return res.status(400).json({ error: 'Invalid status value' });
         }
+        // If disabling self or disabling the final active administrator
+        if (status === 'disabled') {
+          if (userId === req.user.id) {
+            return res.status(400).json({ error: 'You cannot disable your own logged-in administrator account' });
+          }
+          if (user.role === 'admin') {
+            const allUsers = await db.getUsers();
+            const admins = allUsers.filter(u => u.role === 'admin' && u.status === 'enabled');
+            if (admins.length <= 1) {
+              return res.status(400).json({ error: 'Cannot disable the final active Super Administrator account' });
+            }
+          }
+        }
         updates.status = status;
+      }
+      if (role !== undefined) {
+        if (role !== 'admin' && role !== 'user') {
+          return res.status(400).json({ error: 'Invalid role value' });
+        }
+        // If demoting self or demoting the final active administrator
+        if (role === 'user') {
+          if (userId === req.user.id) {
+            return res.status(400).json({ error: 'You cannot demote your own logged-in administrator account' });
+          }
+          if (user.role === 'admin') {
+            const allUsers = await db.getUsers();
+            const admins = allUsers.filter(u => u.role === 'admin' && u.status === 'enabled');
+            if (admins.length <= 1) {
+              return res.status(400).json({ error: 'Cannot demote the final active Super Administrator account' });
+            }
+          }
+        }
+        updates.role = role;
       }
       if (assigned_stream_id !== undefined) {
         updates.assigned_stream_id = assigned_stream_id;
+      }
+      if (display_name !== undefined) {
+        updates.display_name = display_name;
       }
 
       const updated = await db.updateUser(userId, updates);
@@ -841,7 +911,8 @@ segment3.ts
         role: updated.role,
         created_at: updated.created_at,
         status: updated.status || 'enabled',
-        assigned_stream_id: updated.assigned_stream_id || null
+        assigned_stream_id: updated.assigned_stream_id || null,
+        display_name: updated.display_name || null
       });
     } catch (err) {
       console.error('Error updating user:', err);
@@ -849,13 +920,32 @@ segment3.ts
     }
   });
 
-  app.delete('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  app.delete('/api/users/:id', authenticateToken, requireAdmin, async (req: any, res) => {
     const userId = parseInt(req.params.id, 10);
     if (isNaN(userId)) {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
     try {
+      const user = await db.getUserById(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Prevent deletion of currently logged-in administrator
+      if (userId === req.user.id) {
+        return res.status(400).json({ error: 'Access denied: You cannot delete your own logged-in administrator account' });
+      }
+
+      // Prevent deletion of the final remaining Super Administrator account
+      if (user.role === 'admin') {
+        const allUsers = await db.getUsers();
+        const admins = allUsers.filter(u => u.role === 'admin');
+        if (admins.length <= 1) {
+          return res.status(400).json({ error: 'Access denied: Cannot delete the final remaining Super Administrator account' });
+        }
+      }
+
       const success = await db.deleteUser(userId);
       if (!success) {
         return res.status(404).json({ error: 'User not found' });

@@ -132,6 +132,8 @@ const App: React.FC = () => {
   const [editPassword, setEditPassword] = useState('');
   const [editStatus, setEditStatus] = useState<'enabled' | 'disabled'>('enabled');
   const [editAssignedStreamId, setEditAssignedStreamId] = useState('');
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editRole, setEditRole] = useState<'admin' | 'user'>('user');
   const [viewingHistoryUser, setViewingHistoryUser] = useState<any | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
@@ -505,7 +507,9 @@ CREATE TABLE IF NOT EXISTS streams (
         username: editUsername,
         email: editEmail,
         status: editStatus,
-        assigned_stream_id: editAssignedStreamId || null
+        assigned_stream_id: editAssignedStreamId || null,
+        role: editRole,
+        display_name: editDisplayName || editUsername
       };
       if (editPassword) {
         body.password = editPassword;
@@ -532,7 +536,7 @@ CREATE TABLE IF NOT EXISTS streams (
   };
 
   const handleDeleteUser = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this channel user?')) return;
+    if (!window.confirm('Are you sure you want to delete this channel user? This action is irreversible, but will preserve all channels, streams, and activity logs.')) return;
     setUsersError(null);
     try {
       const res = await fetch(`/api/users/${id}`, {
@@ -1550,9 +1554,12 @@ CREATE TABLE IF NOT EXISTS streams (
                         return (
                           <div key={user.id} className="p-4 bg-zinc-950 border border-zinc-850 rounded-xl space-y-3">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-zinc-100">{user.username}</span>
+                              <div className="space-y-1 text-left">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-bold text-zinc-100">{user.display_name || user.username}</span>
+                                  {user.display_name && user.display_name !== user.username && (
+                                    <span className="text-xs text-zinc-500 font-medium">({user.username})</span>
+                                  )}
                                   {user.role === 'admin' && (
                                     <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20">ADMIN</span>
                                   )}
@@ -1563,28 +1570,30 @@ CREATE TABLE IF NOT EXISTS streams (
                                 <p className="text-xs text-zinc-400">{user.email}</p>
                               </div>
 
-                              {user.role !== 'admin' && (
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <button 
-                                    onClick={() => {
-                                      setEditingUserId(user.id);
-                                      setEditUsername(user.username);
-                                      setEditEmail(user.email);
-                                      setEditStatus(user.status || 'enabled');
-                                      setEditAssignedStreamId(user.assigned_stream_id || '');
-                                    }}
-                                    className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all"
-                                  >
-                                    Edit
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteUser(user.id)}
-                                    className="px-2.5 py-1 text-xs bg-red-950/40 hover:bg-red-900/30 text-red-400 border border-red-900/20 font-bold rounded-lg transition-all"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button 
+                                  onClick={() => {
+                                    setEditingUserId(user.id);
+                                    setEditUsername(user.username);
+                                    setEditEmail(user.email);
+                                    setEditStatus(user.status || 'enabled');
+                                    setEditAssignedStreamId(user.assigned_stream_id || '');
+                                    setEditDisplayName(user.display_name || user.username);
+                                    setEditRole(user.role || 'user');
+                                  }}
+                                  className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all"
+                                >
+                                  Edit
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteUser(user.id)}
+                                  disabled={user.id === currentUser?.id}
+                                  title={user.id === currentUser?.id ? "You cannot delete your own logged-in account" : "Delete user account"}
+                                  className="px-2.5 py-1 text-xs bg-red-950/40 hover:bg-red-900/30 text-red-400 border border-red-900/20 font-bold rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs pt-2 border-t border-zinc-900">
@@ -1629,18 +1638,25 @@ CREATE TABLE IF NOT EXISTS streams (
 
                             {/* Inline Edit Form */}
                             {isEditing && (
-                              <form onSubmit={handleUpdateUser} className="mt-4 p-4 bg-zinc-900 border border-zinc-800 rounded-xl space-y-3">
+                              <form onSubmit={handleUpdateUser} className="mt-4 p-4 bg-zinc-900 border border-zinc-800 rounded-xl space-y-3 text-left">
                                 <div className="flex justify-between items-center mb-1">
-                                  <h4 className="text-xs font-bold text-zinc-300">Edit User Account: {user.username}</h4>
+                                  <h4 className="text-xs font-bold text-zinc-300 font-sans">Edit User Account: {user.username}</h4>
                                   <button type="button" onClick={() => setEditingUserId(null)} className="text-zinc-500 hover:text-zinc-300">
                                     <X className="w-4 h-4" />
                                   </button>
                                 </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-sans">
                                   <div className="space-y-1">
                                     <label className="text-[9px] font-bold text-zinc-500 uppercase">Username</label>
                                     <input 
                                       type="text" required value={editUsername} onChange={(e) => setEditUsername(e.target.value)}
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-bold text-zinc-500 uppercase">Display Name</label>
+                                    <input 
+                                      type="text" required value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)}
                                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none"
                                     />
                                   </div>
@@ -1656,14 +1672,26 @@ CREATE TABLE IF NOT EXISTS streams (
                                     <input 
                                       type="password" value={editPassword} onChange={(e) => setEditPassword(e.target.value)}
                                       placeholder="Leave blank to keep same"
-                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none"
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none font-sans"
                                     />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-bold text-zinc-500 uppercase">Account Role</label>
+                                    <select 
+                                      value={editRole} onChange={(e: any) => setEditRole(e.target.value)}
+                                      disabled={user.id === currentUser?.id}
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none disabled:opacity-50"
+                                    >
+                                      <option value="user">User (Channel Broadcaster)</option>
+                                      <option value="admin">Administrator (Super Admin)</option>
+                                    </select>
                                   </div>
                                   <div className="space-y-1">
                                     <label className="text-[9px] font-bold text-zinc-500 uppercase">Account Status</label>
                                     <select 
                                       value={editStatus} onChange={(e: any) => setEditStatus(e.target.value)}
-                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none"
+                                      disabled={user.id === currentUser?.id}
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none disabled:opacity-50"
                                     >
                                       <option value="enabled">Enabled</option>
                                       <option value="disabled">Disabled</option>
@@ -1685,10 +1713,10 @@ CREATE TABLE IF NOT EXISTS streams (
                                   </div>
                                 </div>
                                 <div className="flex justify-end gap-2 pt-2">
-                                  <button type="button" onClick={() => setEditingUserId(null)} className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold rounded-lg">
+                                  <button type="button" onClick={() => setEditingUserId(null)} className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold rounded-lg font-sans">
                                     Cancel
                                   </button>
-                                  <button type="submit" className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg">
+                                  <button type="submit" className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg font-sans">
                                     Save Changes
                                   </button>
                                 </div>
@@ -1730,7 +1758,7 @@ CREATE TABLE IF NOT EXISTS streams (
           {activeTab === 'deploy' && <DeploymentGuide />}
 
           {activeTab === 'stream_test' && (
-            <StreamTestHub streams={streams} />
+            <StreamTestHub streams={streams} activeEndpoint={getSelectedEndpoint()} />
           )}
 
           {activeTab === 'infra' && (

@@ -27,6 +27,7 @@ export interface UserRecord {
   status?: 'enabled' | 'disabled';
   assigned_stream_id?: string | null;
   login_history?: string | null;
+  display_name?: string | null;
 }
 
 export interface StreamRecord {
@@ -335,6 +336,7 @@ export const db = {
             ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'enabled';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_stream_id VARCHAR(50);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS login_history TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
 
             CREATE TABLE IF NOT EXISTS streams (
               id VARCHAR(50) PRIMARY KEY,
@@ -522,7 +524,8 @@ export const db = {
         created_at: r.created_at.toISOString(),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null
+        login_history: r.login_history || null,
+        display_name: r.display_name || null
       };
     }
     const user = localState.users.find(u => u.username.toLowerCase() === username.toLowerCase());
@@ -543,7 +546,8 @@ export const db = {
         created_at: r.created_at.toISOString(),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null
+        login_history: r.login_history || null,
+        display_name: r.display_name || null
       };
     }
     return localState.users.find(u => u.id === id) || null;
@@ -561,7 +565,8 @@ export const db = {
         created_at: r.created_at.toISOString(),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null
+        login_history: r.login_history || null,
+        display_name: r.display_name || null
       }));
     }
     return localState.users;
@@ -570,8 +575,8 @@ export const db = {
   createUser: async (username: string, email: string, passwordHash: string, role: 'admin' | 'user' = 'user'): Promise<UserRecord> => {
     if (usePostgres && pgPool) {
       const res = await pgPool.query(
-        'INSERT INTO users (username, email, password_hash, role, status, assigned_stream_id, login_history) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-        [username, email, passwordHash, role, 'enabled', null, null]
+        'INSERT INTO users (username, email, password_hash, role, status, assigned_stream_id, login_history, display_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+        [username, email, passwordHash, role, 'enabled', null, null, username]
       );
       const r = res.rows[0];
       return {
@@ -583,7 +588,8 @@ export const db = {
         created_at: r.created_at.toISOString(),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null
+        login_history: r.login_history || null,
+        display_name: r.display_name || null
       };
     }
     const newUser: UserRecord = {
@@ -595,7 +601,8 @@ export const db = {
       created_at: new Date().toISOString(),
       status: 'enabled',
       assigned_stream_id: null,
-      login_history: null
+      login_history: null,
+      display_name: username
     };
     localState.users.push(newUser);
     saveLocalState();
@@ -610,7 +617,8 @@ export const db = {
       const setClause = keys.map((key, index) => {
         const pgKey = key === 'password_hash' ? 'password_hash' :
                       key === 'assigned_stream_id' ? 'assigned_stream_id' :
-                      key === 'login_history' ? 'login_history' : key;
+                      key === 'login_history' ? 'login_history' : 
+                      key === 'display_name' ? 'display_name' : key;
         return `${pgKey} = $${index + 2}`;
       }).join(', ');
 
@@ -628,7 +636,8 @@ export const db = {
         created_at: r.created_at.toISOString(),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null
+        login_history: r.login_history || null,
+        display_name: r.display_name || null
       };
     }
 
@@ -641,8 +650,14 @@ export const db = {
 
   deleteUser: async (id: number): Promise<boolean> => {
     if (usePostgres && pgPool) {
+      // Safely remove user-channel assignments in streams before deletion
+      await pgPool.query('UPDATE streams SET user_id = NULL WHERE user_id = $1', [id]);
       const res = await pgPool.query('DELETE FROM users WHERE id = $1', [id]);
       return (res.rowCount ?? 0) > 0;
+    }
+    // Set userId = 0 on associated localState streams to preserve them safely
+    if (localState.streams) {
+      localState.streams = localState.streams.map(s => s.userId === id ? { ...s, userId: 0 } : s);
     }
     const lenBefore = localState.users.length;
     localState.users = localState.users.filter(u => u.id !== id);
