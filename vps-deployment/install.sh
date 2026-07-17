@@ -51,6 +51,7 @@ HOST_HTTPS_PORT=443
 HOST_RTMP_PORT=1935
 
 SKIP_BUILD=false
+REUSE_MODE=false
 
 RESOLVED_PG_STR="None"
 RESOLVED_NGINX_STR="None"
@@ -74,8 +75,95 @@ if [ -f /etc/os-release ]; then
 fi
 
 # 3. Internet Connectivity Check
+check_internet() {
+    local dns_success=false
+    local https_success=false
+    local github_success=false
+    local docker_success=false
+
+    # 1. DNS Resolution Check
+    for domain in google.com github.com registry-1.docker.io; do
+        if command -v getent &>/dev/null && getent ahosts "$domain" &>/dev/null; then
+            dns_success=true
+            break
+        fi
+        if command -v host &>/dev/null && host -W 2 "$domain" &>/dev/null; then
+            dns_success=true
+            break
+        fi
+        if command -v nslookup &>/dev/null && nslookup -timeout=2 "$domain" &>/dev/null; then
+            dns_success=true
+            break
+        fi
+    done
+
+    # 2. HTTPS Request Check
+    for url in https://www.google.com https://www.cloudflare.com; do
+        if command -v curl &>/dev/null; then
+            if curl -sI --connect-timeout 3 "$url" &>/dev/null; then
+                https_success=true
+                break
+            fi
+        fi
+        if command -v wget &>/dev/null; then
+            if wget -q --spider --timeout=3 "$url" &>/dev/null; then
+                https_success=true
+                break
+            fi
+        fi
+    done
+
+    # 3. GitHub Connectivity Check
+    for url in https://github.com https://api.github.com; do
+        if command -v curl &>/dev/null; then
+            if curl -sI --connect-timeout 3 "$url" &>/dev/null; then
+                github_success=true
+                break
+            fi
+        fi
+        if command -v wget &>/dev/null; then
+            if wget -q --spider --timeout=3 "$url" &>/dev/null; then
+                github_success=true
+                break
+            fi
+        fi
+    done
+
+    # 4. Docker Registry Reachability Check
+    for url in https://registry-1.docker.io https://index.docker.io; do
+        if command -v curl &>/dev/null; then
+            if curl -sI --connect-timeout 3 "$url" &>/dev/null; then
+                docker_success=true
+                break
+            fi
+        fi
+        if command -v wget &>/dev/null; then
+            if wget -q --spider --timeout=3 "$url" &>/dev/null; then
+                docker_success=true
+                break
+            fi
+        fi
+    done
+
+    # Consider available if ANY of the checks succeeded
+    if [ "$dns_success" = true ] || [ "$https_success" = true ] || [ "$github_success" = true ] || [ "$docker_success" = true ]; then
+        return 0
+    fi
+
+    # Fallback: ICMP Ping to reliable DNS servers if all else failed
+    for ip in 1.1.1.1 8.8.8.8; do
+        if command -v ping &>/dev/null; then
+            if ping -c 1 -W 2 "$ip" &>/dev/null; then
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
 INTERNET_CONN=false
-if curl -s --connect-timeout 3 https://www.google.com >/dev/null; then
+if check_internet; then
     INTERNET_CONN=true
 fi
 
@@ -287,19 +375,21 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
 
     # Resolve Port 5432 (PostgreSQL)
     if [ "$PORT_5432_OCCUPIED" = true ]; then
-        pid=$(echo "$PORT_5432_PROCESS" | cut -d: -f1)
-        pname=$(echo "$PORT_5432_PROCESS" | cut -d: -f2)
-        log_warning "Port 5432 (PostgreSQL) is currently occupied by process '$pname' (PID: $pid)."
-        echo -e "${YELLOW}[CONFLICT RESOLUTION] Select how to proceed with the PostgreSQL conflict:${NC}"
-        echo "1) Use the existing host PostgreSQL server (configure custom .env parameters and skip host binding conflict)."
-        echo "2) Stop the existing host PostgreSQL service automatically and continue using the Docker PostgreSQL container."
-        echo "3) Deploy the Docker PostgreSQL container on an alternate host port (port 5433) while preserving internal container port."
-        echo "4) Cancel installation safely."
+        echo ""
+        echo "Detected PostgreSQL service."
+        echo ""
+        echo "Select an action:"
+        echo ""
+        echo "1. Use existing PostgreSQL"
+        echo "2. Stop PostgreSQL automatically and continue"
+        echo "3. Use another Docker host port"
+        echo "4. Cancel installation"
+        echo ""
         echo -n -e "${YELLOW}[PROMPT] Choose an option [1-4]: ${NC}"
         if [[ -t 0 ]]; then read -r PG_RESOLUTION; else PG_RESOLUTION="3"; fi
 
         if [[ "$PG_RESOLUTION" == "1" ]]; then
-            RESOLVED_PG_STR="Use existing host PostgreSQL"
+            RESOLVED_PG_STR="Use existing PostgreSQL"
             log_info "Configuring to connect to pre-existing host database..."
             
             echo -n -e "${YELLOW}[PROMPT] Enter host database IP address (default: 172.17.0.1 for docker host gateway): ${NC}"
@@ -331,21 +421,18 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
             # Remap host port of postgres_db container to prevent local port bind error
             sed -i 's/"5432:5432"/"5433:5432"/g' "$SCRIPT_DIR/docker-compose.yml"
         elif [[ "$PG_RESOLUTION" == "2" ]]; then
-            RESOLVED_PG_STR="Stop host PostgreSQL service"
+            RESOLVED_PG_STR="Stop PostgreSQL automatically and continue"
             log_info "Attempting to safely stop host PostgreSQL service..."
-            if systemctl stop postgresql 2>/dev/null || service postgresql stop 2>/dev/null; then
-                sleep 2
-                if [[ -n "$(get_port_process 5432)" ]]; then
-                    log_error "Port 5432 remains occupied after stopping service. Please free it manually."
-                    exit 1
-                fi
-                log_success "Host PostgreSQL service stopped successfully. Port 5432 released."
-            else
-                log_error "Failed to stop host PostgreSQL service automatically. Please stop it or choose another resolution option."
+            systemctl stop postgresql 2>/dev/null || service postgresql stop 2>/dev/null || true
+            sleep 2
+            if [[ -n "$(get_port_process 5432)" ]]; then
+                log_error "Port 5432 remains occupied after stopping service. Please free it manually."
                 exit 1
             fi
+            PORT_5432_OCCUPIED=false
+            log_success "Host PostgreSQL service stopped successfully. Port 5432 released."
         elif [[ "$PG_RESOLUTION" == "3" ]]; then
-            RESOLVED_PG_STR="Deploy Docker PostgreSQL on alternate port 5433"
+            RESOLVED_PG_STR="Use another Docker host port"
             log_info "Modifying docker-compose.yml to deploy Docker PostgreSQL on host port 5433..."
             sed -i 's/"5432:5432"/"5433:5432"/g' "$SCRIPT_DIR/docker-compose.yml"
         else
@@ -355,22 +442,34 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
     fi
 
     # Resolve Port 80 / 443 (Nginx or HTTP service)
-    if [ "$PORT_80_OCCUPIED" = true ] || [ "$PORT_443_OCCUPIED" = true ]; then
-        pid80=$(echo "${PORT_80_PROCESS:-}" | cut -d: -f1 || echo "")
-        pname80=$(echo "${PORT_80_PROCESS:-}" | cut -d: -f2 || echo "")
-        pid443=$(echo "${PORT_443_PROCESS:-}" | cut -d: -f1 || echo "")
-        pname443=$(echo "${PORT_443_PROCESS:-}" | cut -d: -f2 || echo "")
+    IS_NGINX_RUNNING=false
+    if systemctl is-active --quiet nginx 2>/dev/null || service nginx status &>/dev/null || [ "$PORT_80_OCCUPIED" = true ] || [ "$PORT_443_OCCUPIED" = true ] || command -v nginx &>/dev/null; then
+        IS_NGINX_RUNNING=true
+    fi
 
-        log_warning "HTTP port(s) are currently occupied: Port 80 ('$pname80', PID: $pid80) or Port 443 ('$pname443', PID: $pid443)."
-        echo -e "${YELLOW}[CONFLICT RESOLUTION] Select how to proceed with HTTP/Nginx port conflicts:${NC}"
-        echo "1) Stop the existing host HTTP/Nginx service automatically and continue using Docker Nginx on standard ports."
-        echo "2) Deploy Docker Nginx on alternate host ports (8080 for HTTP, 8443 for HTTPS) while preserving internal container ports."
-        echo "3) Cancel installation safely."
-        echo -n -e "${YELLOW}[PROMPT] Choose an option [1-3]: ${NC}"
+    if [ "$IS_NGINX_RUNNING" = true ]; then
+        echo ""
+        echo "Detected Nginx or web service conflict on HTTP ports."
+        echo ""
+        echo "Select:"
+        echo ""
+        echo "1. Use existing Nginx"
+        echo "2. Stop existing Nginx"
+        echo "3. Replace configuration"
+        echo "4. Cancel"
+        echo ""
+        echo -n -e "${YELLOW}[PROMPT] Choose an option [1-4]: ${NC}"
         if [[ -t 0 ]]; then read -r NGINX_RESOLUTION; else NGINX_RESOLUTION="2"; fi
 
         if [[ "$NGINX_RESOLUTION" == "1" ]]; then
-            RESOLVED_NGINX_STR="Stop host Nginx/HTTP service"
+            RESOLVED_NGINX_STR="Use existing Nginx"
+            log_info "Modifying docker-compose.yml to map HTTP to 8080 and HTTPS to 8443..."
+            sed -i 's/"80:80"/"8080:80"/g' "$SCRIPT_DIR/docker-compose.yml"
+            sed -i 's/"443:443"/"8443:443"/g' "$SCRIPT_DIR/docker-compose.yml"
+            HOST_HTTP_PORT=8080
+            HOST_HTTPS_PORT=8443
+        elif [[ "$NGINX_RESOLUTION" == "2" ]]; then
+            RESOLVED_NGINX_STR="Stop existing Nginx"
             log_info "Attempting to stop host Nginx/Apache2 services..."
             systemctl stop nginx 2>/dev/null || service nginx stop 2>/dev/null || true
             systemctl stop apache2 2>/dev/null || service apache2 stop 2>/dev/null || true
@@ -379,14 +478,23 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
                 log_error "HTTP ports (80/443) are still occupied. Please release them manually."
                 exit 1
             fi
+            PORT_80_OCCUPIED=false
+            PORT_443_OCCUPIED=false
             log_success "Host Nginx/HTTP services stopped. Ports 80 and 443 released."
-        elif [[ "$NGINX_RESOLUTION" == "2" ]]; then
-            RESOLVED_NGINX_STR="Deploy Docker Nginx on alternate ports (8080/8443)"
-            log_info "Modifying docker-compose.yml to map HTTP to 8080 and HTTPS to 8443..."
-            sed -i 's/"80:80"/"8080:80"/g' "$SCRIPT_DIR/docker-compose.yml"
-            sed -i 's/"443:443"/"8443:443"/g' "$SCRIPT_DIR/docker-compose.yml"
-            HOST_HTTP_PORT=8080
-            HOST_HTTPS_PORT=8443
+        elif [[ "$NGINX_RESOLUTION" == "3" ]]; then
+            RESOLVED_NGINX_STR="Replace configuration"
+            log_info "Replacing host Nginx configuration with standard Docker ports..."
+            log_info "Stopping and disabling host Nginx service..."
+            systemctl stop nginx 2>/dev/null || service nginx stop 2>/dev/null || true
+            systemctl disable nginx 2>/dev/null || true
+            sleep 2
+            if [[ -n "$(get_port_process 80)" ]] || [[ -n "$(get_port_process 443)" ]]; then
+                log_error "HTTP ports (80/443) are still occupied after disabling host Nginx."
+                exit 1
+            fi
+            PORT_80_OCCUPIED=false
+            PORT_443_OCCUPIED=false
+            log_success "Host Nginx stopped and disabled successfully. Standard Docker ports (80/443) prepared."
         else
             log_warning "Installation cancelled safely."
             exit 0
@@ -456,21 +564,27 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
 
     # Resolve Pre-existing Docker Containers
     if [ ${#EXISTING_CONTAINERS[@]} -gt 0 ]; then
-        log_warning "Pre-existing StreamPulse containers detected: ${EXISTING_CONTAINERS[*]}"
-        echo -e "${YELLOW}[CONFLICT RESOLUTION] Choose how to handle pre-existing Docker containers:${NC}"
-        echo "1) Reuse: Keep existing containers running and start any stopped ones (skips building/recreating)."
-        echo "2) Replace: Stop and remove existing containers, then recreate them clean."
-        echo "3) Remove: Stop and remove existing containers, networks, and volumes for a fully clean reinstall."
-        echo "4) Cancel installation."
-        echo -n -e "${YELLOW}[PROMPT] Choose an option [1-4]: ${NC}"
+        echo ""
+        echo "Existing installation detected."
+        echo ""
+        echo "Select:"
+        echo ""
+        echo "1. Reuse existing deployment"
+        echo "2. Restart containers"
+        echo "3. Rebuild containers"
+        echo "4. Remove existing deployment"
+        echo "5. Cancel"
+        echo ""
+        echo -n -e "${YELLOW}[PROMPT] Choose an option [1-5]: ${NC}"
         if [[ -t 0 ]]; then read -r CONTAINER_RESOLUTION; else CONTAINER_RESOLUTION="2"; fi
 
         if [[ "$CONTAINER_RESOLUTION" == "1" ]]; then
-            RESOLVED_CONTAINER_STR="Reuse existing containers"
+            RESOLVED_CONTAINER_STR="Reuse existing deployment"
             SKIP_BUILD=true
+            REUSE_MODE=true
         elif [[ "$CONTAINER_RESOLUTION" == "2" ]]; then
-            RESOLVED_CONTAINER_STR="Replace existing containers"
-            log_info "Stopping and removing existing containers..."
+            RESOLVED_CONTAINER_STR="Restart containers"
+            log_info "Stopping existing containers..."
             if docker compose version &>/dev/null; then
                 docker compose down || true
             elif command -v docker-compose &>/dev/null; then
@@ -481,8 +595,24 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
                     docker rm "$cname" &>/dev/null || true
                 done
             fi
+            SKIP_BUILD=true
+            REUSE_MODE=false
         elif [[ "$CONTAINER_RESOLUTION" == "3" ]]; then
-            RESOLVED_CONTAINER_STR="Clean reinstall (Remove containers and volumes)"
+            RESOLVED_CONTAINER_STR="Rebuild containers"
+            log_info "Stopping and removing existing containers for rebuild..."
+            if docker compose version &>/dev/null; then
+                docker compose down || true
+            elif command -v docker-compose &>/dev/null; then
+                docker-compose down || true
+            else
+                for cname in "${EXISTING_CONTAINERS[@]}"; do
+                    docker stop "$cname" &>/dev/null || true
+                    docker rm "$cname" &>/dev/null || true
+                done
+            fi
+            SKIP_BUILD=false
+        elif [[ "$CONTAINER_RESOLUTION" == "4" ]]; then
+            RESOLVED_CONTAINER_STR="Remove existing deployment"
             log_info "Stopping and removing existing containers, networks, and persistent volumes..."
             if docker compose version &>/dev/null; then
                 docker compose down -v || true
@@ -494,6 +624,7 @@ if [ "$ACTION_REQ_NEEDED" = true ]; then
                     docker rm -v "$cname" &>/dev/null || true
                 done
             fi
+            SKIP_BUILD=false
         else
             log_warning "Installation cancelled safely."
             exit 0
@@ -899,9 +1030,15 @@ cd "$SCRIPT_DIR"
 mkdir -p "$ROOT_DIR/data"
 
 if [ "$SKIP_BUILD" = true ]; then
-    log_info "Skipping build/recreate stage because 'Reuse' mode was selected."
-    log_info "Starting existing containers..."
-    docker compose up -d --no-recreate
+    if [ "$REUSE_MODE" = true ]; then
+        log_info "Skipping build/recreate stage because 'Reuse' mode was selected."
+        log_info "Starting existing containers..."
+        docker compose up -d --no-recreate
+    else
+        log_info "Skipping build stage because 'Restart' mode was selected."
+        log_info "Starting existing containers (no rebuild)..."
+        docker compose up -d
+    fi
 else
     # Pull and Build
     log_info "Building StreamPulse Manager and Database Containers..."
