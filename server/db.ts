@@ -221,34 +221,11 @@ if (fs.existsSync(JSON_DB_PATH)) {
   }
 }
 
-// Ensure at least one administrator exists in the local JSON database
-const defaultAdminUsername = process.env.ADMIN_USERNAME || 'admin';
-const defaultAdminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
-const oldHardcodedHash = '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW';
-
-const hasAdmin = localState.users.some(u => u.role === 'admin');
-if (!hasAdmin) {
-  const salt = bcrypt.genSaltSync(10);
-  const passwordHash = bcrypt.hashSync(defaultAdminPassword, salt);
-  localState.users.push({
-    id: localState.users.length > 0 ? Math.max(...localState.users.map(u => u.id)) + 1 : 1,
-    username: defaultAdminUsername,
-    email: `${defaultAdminUsername}@streampulse.io`,
-    password_hash: passwordHash,
-    role: 'admin',
-    created_at: new Date().toISOString()
-  });
-  fs.writeFileSync(JSON_DB_PATH, JSON.stringify(localState, null, 2));
-  console.log(`Seeded default admin account (${defaultAdminUsername}) into local JSON database.`);
-} else {
-  // Update existing default admin if password hash is the old hardcoded one
-  const existingDefaultAdmin = localState.users.find(u => u.username === defaultAdminUsername);
-  if (existingDefaultAdmin && existingDefaultAdmin.password_hash === oldHardcodedHash) {
-    const salt = bcrypt.genSaltSync(10);
-    existingDefaultAdmin.password_hash = bcrypt.hashSync(defaultAdminPassword, salt);
-    fs.writeFileSync(JSON_DB_PATH, JSON.stringify(localState, null, 2));
-    console.log(`Updated default admin password to environment ADMIN_PASSWORD in local JSON database.`);
-  }
+// Helper to verify bcrypt hash format
+function isValidBcryptHash(hash: string): boolean {
+  if (typeof hash !== 'string') return false;
+  const bcryptRegex = /^\$2[ayb]\$[0-9]{2}\$[A-Za-z0-9./]{53}$/;
+  return bcryptRegex.test(hash);
 }
 
 // Function to save state to file
@@ -462,30 +439,6 @@ export const db = {
             );
           `);
           console.log('PostgreSQL Database tables verified/created successfully.');
-          
-          // Seed default admin if no administrator exists
-          const adminCheck = await client.query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
-          const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-          const adminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
-          if (parseInt(adminCheck.rows[0].count, 10) === 0) {
-            const salt = await bcrypt.genSalt(10);
-            const passwordHash = await bcrypt.hash(adminPassword, salt);
-            await client.query(`
-              INSERT INTO users (username, email, password_hash, role)
-              VALUES ($1, $2, $3, 'admin')
-            `, [adminUsername, `${adminUsername}@streampulse.io`, passwordHash]);
-            console.log(`Seeded default admin account (${adminUsername}) into PostgreSQL.`);
-          } else {
-            // Update existing default admin if password hash is the old hardcoded one
-            const oldHardcodedHash = '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW';
-            const existingAdminRes = await client.query("SELECT * FROM users WHERE username = $1", [adminUsername]);
-            if (existingAdminRes.rows.length > 0 && existingAdminRes.rows[0].password_hash === oldHardcodedHash) {
-              const salt = await bcrypt.genSalt(10);
-              const passwordHash = await bcrypt.hash(adminPassword, salt);
-              await client.query("UPDATE users SET password_hash = $1 WHERE username = $2", [passwordHash, adminUsername]);
-              console.log(`Updated default admin password to environment ADMIN_PASSWORD in PostgreSQL.`);
-            }
-          }
         } finally {
           client.release();
         }
@@ -507,6 +460,119 @@ export const db = {
       }
       console.log('PostgreSQL is disabled; using local JSON fallback database as explicitly configured.');
     }
+
+    // --- Unified Administrator Authentication Audit & Verification ---
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
+    const resetRequested = process.env.ADMIN_PASSWORD_RESET === 'true';
+    const oldHardcodedHash = '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW';
+
+    // Log authentication storage mode
+    console.log(`Authentication storage mode: ${usePostgres ? 'PostgreSQL' : 'JSON'}`);
+
+    if (usePostgres && pgPool) {
+      try {
+        const client = await pgPool.connect();
+        try {
+          // Look for existing admin users
+          const adminCheck = await client.query("SELECT * FROM users WHERE role = 'admin'");
+          const existingAdminByUsernameRes = await client.query("SELECT * FROM users WHERE username = $1", [adminUsername]);
+          const existingAdminByUsername = existingAdminByUsernameRes.rows[0] || null;
+
+          let targetAdmin = existingAdminByUsername;
+          if (!targetAdmin && adminCheck.rows.length > 0) {
+            targetAdmin = adminCheck.rows[0];
+          }
+
+          if (!targetAdmin) {
+            // No administrator exists in PostgreSQL - create default admin
+            const salt = await bcrypt.genSalt(10);
+            const passwordHash = await bcrypt.hash(adminPassword, salt);
+            await client.query(`
+              INSERT INTO users (username, email, password_hash, role, status, display_name)
+              VALUES ($1, $2, $3, 'admin', 'enabled', $4)
+            `, [adminUsername, `${adminUsername}@streampulse.io`, passwordHash, adminUsername]);
+            console.log(`Default admin created.`);
+          } else {
+            // An administrator exists - verify the password hash
+            const currentHash = targetAdmin.password_hash;
+            const isCorrupted = !isValidBcryptHash(currentHash);
+            
+            if (isCorrupted) {
+              console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
+            }
+
+            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
+              const salt = await bcrypt.genSalt(10);
+              const passwordHash = await bcrypt.hash(adminPassword, salt);
+              await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, targetAdmin.id]);
+              if (resetRequested) {
+                console.log(`Admin password reset completed.`);
+              } else {
+                console.log(`Admin password repair completed.`);
+              }
+            } else {
+              console.log(`Existing admin detected.`);
+            }
+          }
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        console.error('Error during PostgreSQL authentication audit:', err);
+      }
+    } else {
+      // JSON storage mode audit & verification
+      const existingAdminByUsername = localState.users.find(u => u.username.toLowerCase() === adminUsername.toLowerCase());
+      const existingAdminByRole = localState.users.find(u => u.role === 'admin');
+
+      let targetAdmin = existingAdminByUsername;
+      if (!targetAdmin && existingAdminByRole) {
+        targetAdmin = existingAdminByRole;
+      }
+
+      if (!targetAdmin) {
+        // No administrator exists in JSON - create default admin
+        const salt = bcrypt.genSaltSync(10);
+        const passwordHash = bcrypt.hashSync(adminPassword, salt);
+        localState.users.push({
+          id: localState.users.length > 0 ? Math.max(...localState.users.map(u => u.id)) + 1 : 1,
+          username: adminUsername,
+          email: `${adminUsername}@streampulse.io`,
+          password_hash: passwordHash,
+          role: 'admin',
+          created_at: new Date().toISOString(),
+          status: 'enabled',
+          display_name: adminUsername
+        });
+        saveLocalState();
+        console.log(`Default admin created.`);
+      } else {
+        // An administrator exists - verify the password hash
+        const currentHash = targetAdmin.password_hash;
+        const isCorrupted = !isValidBcryptHash(currentHash);
+
+        if (isCorrupted) {
+          console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
+        }
+
+        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
+          const salt = bcrypt.genSaltSync(10);
+          const passwordHash = bcrypt.hashSync(adminPassword, salt);
+          targetAdmin.password_hash = passwordHash;
+          saveLocalState();
+          if (resetRequested) {
+            console.log(`Admin password reset completed.`);
+          } else {
+            console.log(`Admin password repair completed.`);
+          }
+        } else {
+          console.log(`Existing admin detected.`);
+        }
+      }
+    }
+
+    console.log('Login validation initialized.');
   },
 
   // USERS
