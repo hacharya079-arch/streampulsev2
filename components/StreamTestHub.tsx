@@ -269,22 +269,14 @@ export const StreamTestHub: React.FC<StreamTestHubProps> = ({ streams, activeEnd
     }
   }, [streams, selectedStreamId]);
 
-  // Derive alternative URLs using dynamic endpoint selection
-  const baseHttp = selectedStream ? selectedStream.rtmpUrl.replace('rtmp://', 'http://').split('/')[0] : '154.12.88.2';
-  
-  const endpointDetails = activeEndpoint || {
-    endpoint: typeof window !== 'undefined' ? window.location.hostname : baseHttp,
-    source: 'Detected Hostname'
-  };
-  const activeEndpointVal = endpointDetails.endpoint;
-  
-  const portPart = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
-  const currentHost = activeEndpointVal.includes(':') ? activeEndpointVal : `${activeEndpointVal}${portPart}`;
-  const currentProto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+  // Prefer playback URLs resolved and provided by the backend runtime resolver
+  const resolvedBaseUrl = selectedStream?.playbackUrls?.baseUrl || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}` : 'http://localhost');
+  const currentProto = resolvedBaseUrl.split('://')[0] + ':';
+  const currentHost = resolvedBaseUrl.split('://')[1] || 'localhost';
 
-  const hlsUrl = selectedStream ? `${currentProto}//${currentHost}/hls/${selectedStream.streamKey}/master.m3u8` : '';
-  const dashUrl = selectedStream ? `${currentProto}//${currentHost}/dash/${selectedStream.streamKey}/manifest.mpd` : '';
-  const embedUrl = selectedStream ? `${currentProto}//${currentHost}/player/${selectedStream.streamKey}` : '';
+  const hlsUrl = selectedStream ? (selectedStream.playbackUrls?.master || `${resolvedBaseUrl}/hls/${selectedStream.streamKey}/master.m3u8`) : '';
+  const dashUrl = selectedStream ? (selectedStream.playbackUrls?.dash || `${resolvedBaseUrl}/dash/${selectedStream.streamKey}/manifest.mpd`) : '';
+  const embedUrl = selectedStream ? (selectedStream.playbackUrls?.embed || `${resolvedBaseUrl}/player/${selectedStream.streamKey}`) : '';
 
   // Load dependency scripts
   const loadScript = (url: string, id: string): Promise<void> => {

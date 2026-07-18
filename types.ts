@@ -41,6 +41,16 @@ export interface StreamSession {
   audioPassthrough?: boolean;
   audioTranscoding?: boolean;
   profilesJson?: string;
+  playbackUrls?: {
+    baseUrl: string;
+    master: string;
+    p1080: string;
+    p720: string;
+    p480: string;
+    p360: string;
+    dash: string;
+    embed: string;
+  };
 }
 
 export interface StreamStats {

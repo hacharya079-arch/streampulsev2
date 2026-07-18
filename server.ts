@@ -1024,6 +1024,32 @@ segment3.ts
   }
 
   async function resolveRuntimeEndpoint(req?: any) {
+    // 0. Manual overrides passed from client headers
+    if (req && req.headers) {
+      const customDomain = req.headers['x-custom-domain'];
+      const manualIp = req.headers['x-manual-ip'];
+
+      if (customDomain) {
+        return {
+          activeEndpoint: customDomain,
+          source: 'Custom Configured Domain',
+          domain: customDomain,
+          publicIp: await detectPublicIp() || 'Unavailable',
+          lanIp: getLocalIp()
+        };
+      }
+
+      if (manualIp) {
+        return {
+          activeEndpoint: manualIp,
+          source: 'Manual Overridden IP',
+          domain: '',
+          publicIp: manualIp,
+          lanIp: getLocalIp()
+        };
+      }
+    }
+
     // 1. Configured Domain
     const domain = process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
     if (domain) {

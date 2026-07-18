@@ -285,6 +285,23 @@ CREATE TABLE IF NOT EXISTS streams (
     localStorage.setItem('streampulse_custom_domain', customDomain);
   }, [customDomain]);
 
+  const fetchWithNetworkHeaders = useCallback(async (url: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    if (customDomain && customDomain.trim() !== '') {
+      headers.set('x-custom-domain', customDomain.trim());
+    }
+    if (manualIp && manualIp.trim() !== '' && manualIp !== '0.0.0.0') {
+      headers.set('x-manual-ip', manualIp.trim());
+    }
+    return fetch(url, {
+      ...init,
+      headers
+    });
+  }, [token, customDomain, manualIp]);
+
   const MIN_SCHEDULE_DATE = '2026-01-01';
   const MAX_SCHEDULE_DATE = '2027-12-31';
 
@@ -373,9 +390,7 @@ CREATE TABLE IF NOT EXISTS streams (
     if (!token) return;
     const fetchProfile = async () => {
       try {
-        const res = await fetch('/api/auth/me', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const res = await fetchWithNetworkHeaders('/api/auth/me');
         if (res.status === 401 || res.status === 403) {
           handleLogout();
           return;
@@ -428,9 +443,7 @@ CREATE TABLE IF NOT EXISTS streams (
   const fetchStreams = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/streams', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetchWithNetworkHeaders('/api/streams');
       const data = await res.json();
       if (res.ok) setStreams(data);
     } catch (err) {
@@ -443,9 +456,7 @@ CREATE TABLE IF NOT EXISTS streams (
     setUsersLoading(true);
     setUsersError(null);
     try {
-      const res = await fetch('/api/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetchWithNetworkHeaders('/api/users');
       const data = await res.json();
       if (res.ok) {
         setUsersList(data);
@@ -474,11 +485,10 @@ CREATE TABLE IF NOT EXISTS streams (
     setUsersError(null);
     setCreateUserSuccess('');
     try {
-      const res = await fetch('/api/users', {
+      const res = await fetchWithNetworkHeaders('/api/users', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           username: newUsername,
@@ -519,11 +529,10 @@ CREATE TABLE IF NOT EXISTS streams (
       if (editPassword) {
         body.password = editPassword;
       }
-      const res = await fetch(`/api/users/${editingUserId}`, {
+      const res = await fetchWithNetworkHeaders(`/api/users/${editingUserId}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(body)
       });
@@ -545,9 +554,8 @@ CREATE TABLE IF NOT EXISTS streams (
     setUsersError(null);
     try {
       console.log(`[DELETE WORKFLOW] Dispatching DELETE request to /api/users/${id}`);
-      const res = await fetch(`/api/users/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetchWithNetworkHeaders(`/api/users/${id}`, {
+        method: 'DELETE'
       });
       console.log(`[DELETE WORKFLOW] Received response status: ${res.status}`);
       if (res.ok) {
@@ -567,9 +575,7 @@ CREATE TABLE IF NOT EXISTS streams (
   const fetchStats = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/system/stats', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetchWithNetworkHeaders('/api/system/stats');
       const data = await res.json();
       if (res.ok) setStats(data);
     } catch (err) {
@@ -580,9 +586,7 @@ CREATE TABLE IF NOT EXISTS streams (
   const fetchActionLogs = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/system/logs', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetchWithNetworkHeaders('/api/system/logs');
       const data = await res.json();
       if (res.ok) setActionLogs(data);
     } catch (err) {
@@ -593,9 +597,7 @@ CREATE TABLE IF NOT EXISTS streams (
   const fetchNetworkDetails = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/network/details', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetchWithNetworkHeaders('/api/network/details');
       const data = await res.json();
       if (res.ok) {
         setNetworkDetails(data);
@@ -637,11 +639,10 @@ CREATE TABLE IF NOT EXISTS streams (
     const scheduledStart = newStreamData.isScheduled ? `${newStreamData.scheduledDate}T${newStreamData.scheduledTime}:00` : undefined;
 
     try {
-      const res = await fetch('/api/streams', {
+      const res = await fetchWithNetworkHeaders('/api/streams', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           title: newStreamData.title,
@@ -691,9 +692,8 @@ CREATE TABLE IF NOT EXISTS streams (
   const handleConfirmRemoval = async () => {
     if (confirmRemovalId) {
       try {
-        const res = await fetch(`/api/streams/${confirmRemovalId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
+        const res = await fetchWithNetworkHeaders(`/api/streams/${confirmRemovalId}`, {
+          method: 'DELETE'
         });
         if (res.ok) {
           setStreams(prev => prev.filter(s => s.id !== confirmRemovalId));
@@ -708,11 +708,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleUpdateResolution = async (id: string, resolution: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ resolution })
       });
@@ -729,11 +728,10 @@ CREATE TABLE IF NOT EXISTS streams (
     try {
       const otherStreams = streams.filter(s => s.id !== sourceId);
       for (const other of otherStreams) {
-        await fetch(`/api/streams/${other.id}`, {
+        await fetchWithNetworkHeaders(`/api/streams/${other.id}`, {
           method: 'PUT',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify(config)
         });
@@ -748,11 +746,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleUpdateQuality = async (id: string, bitrate: number, codec: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ bitrate, codec })
       });
@@ -767,11 +764,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleEnableStream = async (id: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}/enable`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}/enable`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         }
       });
       if (res.ok) {
@@ -789,11 +785,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleDisableStream = async (id: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}/disable`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}/disable`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         }
       });
       if (res.ok) {
@@ -813,11 +808,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleEditStream = async (id: string, fields: Partial<StreamSession>) => {
     try {
-      const res = await fetch(`/api/streams/${id}`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(fields)
       });
@@ -835,9 +829,8 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleRegenerateKey = async (id: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}/regenerate`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}/regenerate`, {
+        method: 'POST'
       });
       if (res.ok) {
         const updated = await res.json();
@@ -850,11 +843,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleGoLive = async (id: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}/toggle`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}/toggle`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ status: 'live' })
       });
@@ -869,11 +861,10 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleRestartStream = async (id: string) => {
     try {
-      const res = await fetch(`/api/streams/${id}/toggle`, {
+      const res = await fetchWithNetworkHeaders(`/api/streams/${id}/toggle`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ status: 'offline' })
       });
@@ -1367,7 +1358,7 @@ CREATE TABLE IF NOT EXISTS streams (
                     <Wifi className="w-3.5 h-3.5 text-zinc-500" />
                     <span className="text-[11px] text-zinc-400">Ingest point URL: </span>
                   </div>
-                  <span className="text-[11px] font-mono text-blue-400 font-bold truncate">rtmp://{getEffectiveIp(creationIpMode)}/live</span>
+                  <span className="text-[11px] font-mono text-blue-400 font-bold truncate">{networkDetails?.rtmpUrl || 'rtmp://localhost/live'}</span>
                 </div>
               </section>
               )}

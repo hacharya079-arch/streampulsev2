@@ -957,25 +957,15 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     }
   };
 
-  // Derive alternative URLs
+  // Prefer playback URLs resolved and provided by the backend runtime resolver
+  const resolvedBaseUrl = stream.playbackUrls?.baseUrl || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}` : 'http://localhost');
+  const currentProto = resolvedBaseUrl.split('://')[0] + ':';
+  const currentHost = resolvedBaseUrl.split('://')[1] || 'localhost';
+
   const rtmpPlayback = `${stream.rtmpUrl}/${stream.streamKey}`;
-  const baseHttp = stream.rtmpUrl.replace('rtmp://', 'http://').split('/')[0];
-  
-  // Dynamically resolve hostname & protocol based on selected active endpoint priority
-  const endpointDetails = activeEndpoint || {
-    endpoint: typeof window !== 'undefined' ? window.location.hostname : baseHttp,
-    source: 'Detected Hostname'
-  };
-  const activeEndpointVal = endpointDetails.endpoint;
-  const activeEndpointSource = endpointDetails.source;
-  
-  const portPart = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
-  const currentHost = activeEndpointVal.includes(':') ? activeEndpointVal : `${activeEndpointVal}${portPart}`;
-  const currentProto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
-  
-  const hlsUrl = `${currentProto}//${currentHost}/hls/${stream.streamKey}/master.m3u8`;
-  const dashUrl = `${currentProto}//${currentHost}/dash/${stream.streamKey}/manifest.mpd`;
-  const embedUrl = `${currentProto}//${currentHost}/player/${stream.streamKey}`;
+  const hlsUrl = stream.playbackUrls?.master || `${resolvedBaseUrl}/hls/${stream.streamKey}/master.m3u8`;
+  const dashUrl = stream.playbackUrls?.dash || `${resolvedBaseUrl}/dash/${stream.streamKey}/manifest.mpd`;
+  const embedUrl = stream.playbackUrls?.embed || `${resolvedBaseUrl}/player/${stream.streamKey}`;
 
   // Interactive Player Lifecycle effect (instantiates Hls.js or Dash.js on the <video> target)
   useEffect(() => {
@@ -3139,11 +3129,11 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   <div className="grid grid-cols-2 gap-2 text-[10px]">
                     <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
                       <span className="text-zinc-500 block text-[8px] font-bold uppercase">Active Endpoint</span>
-                      <span className="font-mono text-emerald-400 font-bold truncate block" title={activeEndpointVal}>{activeEndpointVal}</span>
+                      <span className="font-mono text-emerald-400 font-bold truncate block" title={currentHost}>{currentHost}</span>
                     </div>
                     <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
                       <span className="text-zinc-500 block text-[8px] font-bold uppercase">Endpoint Source</span>
-                      <span className="text-zinc-300 font-medium truncate block">{activeEndpointSource}</span>
+                      <span className="text-zinc-300 font-medium truncate block">{stream.playbackUrls ? 'Centralized Runtime Resolver' : 'Local Fallback'}</span>
                     </div>
                   </div>
 
@@ -3223,10 +3213,10 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-wider block px-1">Variant Playlists (Adaptive bitrates)</span>
                   <div className="space-y-2">
                     {[
-                      { label: '1080p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/1080p/index.m3u8`, key: 'p1080' },
-                      { label: '720p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/720p/index.m3u8`, key: 'p720' },
-                      { label: '480p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/480p/index.m3u8`, key: 'p480' },
-                      { label: '360p Playlist', url: `${currentProto}//${currentHost}/hls/${stream.streamKey}/360p/index.m3u8`, key: 'p360' },
+                      { label: '1080p Playlist', url: stream.playbackUrls?.p1080 || `${resolvedBaseUrl}/hls/${stream.streamKey}/1080p/index.m3u8`, key: 'p1080' },
+                      { label: '720p Playlist', url: stream.playbackUrls?.p720 || `${resolvedBaseUrl}/hls/${stream.streamKey}/720p/index.m3u8`, key: 'p720' },
+                      { label: '480p Playlist', url: stream.playbackUrls?.p480 || `${resolvedBaseUrl}/hls/${stream.streamKey}/480p/index.m3u8`, key: 'p480' },
+                      { label: '360p Playlist', url: stream.playbackUrls?.p360 || `${resolvedBaseUrl}/hls/${stream.streamKey}/360p/index.m3u8`, key: 'p360' },
                     ].map(variant => (
                       <div key={variant.key} className="flex items-center justify-between text-[9px] bg-black/40 p-1.5 rounded border border-zinc-800/50">
                         <div className="flex items-center gap-1.5 truncate mr-2 flex-1">
