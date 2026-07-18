@@ -270,13 +270,13 @@ export const StreamTestHub: React.FC<StreamTestHubProps> = ({ streams, activeEnd
   }, [streams, selectedStreamId]);
 
   // Prefer playback URLs resolved and provided by the backend runtime resolver
-  const resolvedBaseUrl = selectedStream?.playbackUrls?.baseUrl || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}` : 'http://localhost');
-  const currentProto = resolvedBaseUrl.split('://')[0] + ':';
-  const currentHost = resolvedBaseUrl.split('://')[1] || 'localhost';
+  const resolvedBaseUrl = selectedStream?.playbackUrls?.baseUrl || 'Endpoint unavailable';
+  const currentProto = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[0] + ':' : 'Endpoint unavailable';
+  const currentHost = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[1] || 'Endpoint unavailable' : 'Endpoint unavailable';
 
-  const hlsUrl = selectedStream ? (selectedStream.playbackUrls?.master || `${resolvedBaseUrl}/hls/${selectedStream.streamKey}/master.m3u8`) : '';
-  const dashUrl = selectedStream ? (selectedStream.playbackUrls?.dash || `${resolvedBaseUrl}/dash/${selectedStream.streamKey}/manifest.mpd`) : '';
-  const embedUrl = selectedStream ? (selectedStream.playbackUrls?.embed || `${resolvedBaseUrl}/player/${selectedStream.streamKey}`) : '';
+  const hlsUrl = selectedStream ? (selectedStream.playbackUrls?.master || 'Endpoint unavailable') : 'Endpoint unavailable';
+  const dashUrl = selectedStream ? (selectedStream.playbackUrls?.dash || 'Endpoint unavailable') : 'Endpoint unavailable';
+  const embedUrl = selectedStream ? (selectedStream.playbackUrls?.embed || 'Endpoint unavailable') : 'Endpoint unavailable';
 
   // Load dependency scripts
   const loadScript = (url: string, id: string): Promise<void> => {

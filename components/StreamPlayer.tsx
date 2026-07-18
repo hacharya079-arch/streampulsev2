@@ -958,14 +958,14 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   };
 
   // Prefer playback URLs resolved and provided by the backend runtime resolver
-  const resolvedBaseUrl = stream.playbackUrls?.baseUrl || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}` : 'http://localhost');
-  const currentProto = resolvedBaseUrl.split('://')[0] + ':';
-  const currentHost = resolvedBaseUrl.split('://')[1] || 'localhost';
+  const resolvedBaseUrl = stream.playbackUrls?.baseUrl || 'Endpoint unavailable';
+  const currentProto = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[0] + ':' : 'Endpoint unavailable';
+  const currentHost = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[1] || 'Endpoint unavailable' : 'Endpoint unavailable';
 
-  const rtmpPlayback = `${stream.rtmpUrl}/${stream.streamKey}`;
-  const hlsUrl = stream.playbackUrls?.master || `${resolvedBaseUrl}/hls/${stream.streamKey}/master.m3u8`;
-  const dashUrl = stream.playbackUrls?.dash || `${resolvedBaseUrl}/dash/${stream.streamKey}/manifest.mpd`;
-  const embedUrl = stream.playbackUrls?.embed || `${resolvedBaseUrl}/player/${stream.streamKey}`;
+  const rtmpPlayback = stream.rtmpUrl ? `${stream.rtmpUrl}/${stream.streamKey}` : 'Endpoint unavailable';
+  const hlsUrl = stream.playbackUrls?.master || 'Endpoint unavailable';
+  const dashUrl = stream.playbackUrls?.dash || 'Endpoint unavailable';
+  const embedUrl = stream.playbackUrls?.embed || 'Endpoint unavailable';
 
   // Interactive Player Lifecycle effect (instantiates Hls.js or Dash.js on the <video> target)
   useEffect(() => {
@@ -3133,7 +3133,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                     </div>
                     <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1">
                       <span className="text-zinc-500 block text-[8px] font-bold uppercase">Endpoint Source</span>
-                      <span className="text-zinc-300 font-medium truncate block">{stream.playbackUrls ? 'Centralized Runtime Resolver' : 'Local Fallback'}</span>
+                      <span className="text-zinc-300 font-medium truncate block">{stream.playbackUrls ? 'Centralized Runtime Resolver' : 'Endpoint unavailable'}</span>
                     </div>
                   </div>
 
@@ -3156,7 +3156,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
                   <div className="bg-zinc-900/40 p-2 rounded border border-zinc-800/40 space-y-1 text-[10px]">
                     <span className="text-zinc-500 block text-[8px] font-bold uppercase">Playback Base URL</span>
-                    <code className="text-zinc-400 font-mono truncate block select-all">{`${currentProto}//${currentHost}`}</code>
+                    <code className="text-zinc-400 font-mono truncate block select-all">{currentProto === 'Endpoint unavailable' || currentHost === 'Endpoint unavailable' ? 'Endpoint unavailable' : `${currentProto}//${currentHost}`}</code>
                   </div>
                 </div>
 
@@ -3171,7 +3171,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   </div>
                   <div className="flex items-center justify-between text-[10px] bg-black/60 p-1.5 rounded-lg border border-zinc-800/80">
                       <code className="text-emerald-400 truncate mr-1.5 font-mono flex-1">
-                        {revealedPlaybacks.rtmp ? rtmpPlayback : `rtmp://${currentHost}/live/••••••`}
+                        {revealedPlaybacks.rtmp ? rtmpPlayback : (currentHost === 'Endpoint unavailable' ? 'Endpoint unavailable' : `rtmp://${currentHost}/live/••••••`)}
                       </code>
                       <div className="flex items-center gap-1">
                         <button onClick={() => toggleReveal('rtmp')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
@@ -3195,7 +3195,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   </div>
                   <div className="flex items-center justify-between text-[10px] bg-black/60 p-1.5 rounded-lg border border-zinc-800/80">
                       <code className="text-blue-400 truncate mr-1.5 font-mono flex-1">
-                        {revealedPlaybacks.hls ? hlsUrl : `${currentProto}//${currentHost}/hls/••••••/master.m3u8`}
+                        {revealedPlaybacks.hls ? hlsUrl : (currentProto === 'Endpoint unavailable' || currentHost === 'Endpoint unavailable' ? 'Endpoint unavailable' : `${currentProto}//${currentHost}/hls/••••••/master.m3u8`)}
                       </code>
                       <div className="flex items-center gap-1">
                         <button onClick={() => toggleReveal('hls')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
@@ -3213,10 +3213,10 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-wider block px-1">Variant Playlists (Adaptive bitrates)</span>
                   <div className="space-y-2">
                     {[
-                      { label: '1080p Playlist', url: stream.playbackUrls?.p1080 || `${resolvedBaseUrl}/hls/${stream.streamKey}/1080p/index.m3u8`, key: 'p1080' },
-                      { label: '720p Playlist', url: stream.playbackUrls?.p720 || `${resolvedBaseUrl}/hls/${stream.streamKey}/720p/index.m3u8`, key: 'p720' },
-                      { label: '480p Playlist', url: stream.playbackUrls?.p480 || `${resolvedBaseUrl}/hls/${stream.streamKey}/480p/index.m3u8`, key: 'p480' },
-                      { label: '360p Playlist', url: stream.playbackUrls?.p360 || `${resolvedBaseUrl}/hls/${stream.streamKey}/360p/index.m3u8`, key: 'p360' },
+                      { label: '1080p Playlist', url: stream.playbackUrls?.p1080 || 'Endpoint unavailable', key: 'p1080' },
+                      { label: '720p Playlist', url: stream.playbackUrls?.p720 || 'Endpoint unavailable', key: 'p720' },
+                      { label: '480p Playlist', url: stream.playbackUrls?.p480 || 'Endpoint unavailable', key: 'p480' },
+                      { label: '360p Playlist', url: stream.playbackUrls?.p360 || 'Endpoint unavailable', key: 'p360' },
                     ].map(variant => (
                       <div key={variant.key} className="flex items-center justify-between text-[9px] bg-black/40 p-1.5 rounded border border-zinc-800/50">
                         <div className="flex items-center gap-1.5 truncate mr-2 flex-1">
@@ -3245,7 +3245,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   </div>
                   <div className="flex items-center justify-between text-[10px] bg-black/60 p-1.5 rounded-lg border border-zinc-800/80">
                       <code className="text-purple-400 truncate mr-1.5 font-mono flex-1">
-                        {revealedPlaybacks.dash ? dashUrl : `${currentProto}//${currentHost}/dash/••••••/manifest.mpd`}
+                        {revealedPlaybacks.dash ? dashUrl : (currentProto === 'Endpoint unavailable' || currentHost === 'Endpoint unavailable' ? 'Endpoint unavailable' : `${currentProto}//${currentHost}/dash/••••••/manifest.mpd`)}
                       </code>
                       <div className="flex items-center gap-1">
                         <button onClick={() => toggleReveal('dash')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">

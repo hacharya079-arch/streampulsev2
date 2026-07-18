@@ -36,6 +36,62 @@ if (isAiEnabled) {
   console.log('AI features are disabled via AI_ENABLED config. Skipping Gemini initialization.');
 }
 
+const SETTINGS_FILE = path.resolve('./data/server_settings.json');
+const FORCED_RESETS_FILE = path.resolve('./data/forced_resets.json');
+
+interface ServerSettings {
+  deploymentMode: 'auto' | 'lan' | 'public' | 'domain';
+  customDomain: string;
+  manualIp: string;
+}
+
+let serverSettings: ServerSettings = {
+  deploymentMode: 'auto',
+  customDomain: '',
+  manualIp: ''
+};
+
+let forcedPasswordResets = new Set<number>();
+
+// Load server settings on boot
+try {
+  if (fs.existsSync(SETTINGS_FILE)) {
+    serverSettings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+  }
+} catch (err) {
+  console.error('Error loading server settings:', err);
+}
+
+// Load forced password resets on boot
+try {
+  if (fs.existsSync(FORCED_RESETS_FILE)) {
+    const data = JSON.parse(fs.readFileSync(FORCED_RESETS_FILE, 'utf-8'));
+    forcedPasswordResets = new Set(data);
+  }
+} catch (err) {
+  console.error('Error loading forced resets:', err);
+}
+
+function saveServerSettings() {
+  try {
+    const dir = path.dirname(SETTINGS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(serverSettings, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving server settings:', err);
+  }
+}
+
+function saveForcedResets() {
+  try {
+    const dir = path.dirname(FORCED_RESETS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(FORCED_RESETS_FILE, JSON.stringify(Array.from(forcedPasswordResets)), 'utf-8');
+  } catch (err) {
+    console.error('Error saving forced resets:', err);
+  }
+}
+
 async function startServer() {
   // Initialize Database tables (Postgres or Fallback JSON)
   await db.init();
@@ -700,7 +756,8 @@ segment3.ts
           role: user.role,
           createdAt: user.created_at,
           status: user.status || 'enabled',
-          assigned_stream_id: user.assigned_stream_id || null
+          assigned_stream_id: user.assigned_stream_id || null,
+          mustResetPassword: forcedPasswordResets.has(user.id)
         }
       });
     } catch (err) {
@@ -722,7 +779,8 @@ segment3.ts
         role: user.role,
         createdAt: user.created_at,
         status: user.status || 'enabled',
-        assigned_stream_id: user.assigned_stream_id || null
+        assigned_stream_id: user.assigned_stream_id || null,
+        mustResetPassword: forcedPasswordResets.has(user.id)
       });
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -1024,49 +1082,82 @@ segment3.ts
   }
 
   async function resolveRuntimeEndpoint(req?: any) {
-    // 0. Manual overrides passed from client headers
+    // Determine which deployment settings to use
+    let mode = serverSettings.deploymentMode;
+    let customDomain = serverSettings.customDomain;
+    let manualIp = serverSettings.manualIp;
+
     if (req && req.headers) {
-      const customDomain = req.headers['x-custom-domain'];
-      const manualIp = req.headers['x-manual-ip'];
-
-      if (customDomain) {
-        return {
-          activeEndpoint: customDomain,
-          source: 'Custom Configured Domain',
-          domain: customDomain,
-          publicIp: await detectPublicIp() || 'Unavailable',
-          lanIp: getLocalIp()
-        };
+      if (req.headers['x-deployment-mode']) {
+        mode = req.headers['x-deployment-mode'] as any;
       }
-
-      if (manualIp) {
-        return {
-          activeEndpoint: manualIp,
-          source: 'Manual Overridden IP',
-          domain: '',
-          publicIp: manualIp,
-          lanIp: getLocalIp()
-        };
+      if (req.headers['x-custom-domain']) {
+        customDomain = req.headers['x-custom-domain'] as string;
+      }
+      if (req.headers['x-manual-ip']) {
+        manualIp = req.headers['x-manual-ip'] as string;
       }
     }
 
-    // 1. Configured Domain
-    const domain = process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
+    const publicIp = await detectPublicIp() || 'Unavailable';
+    const lanIp = getLocalIp();
+
+    // 1. Force based on mode
+    if (mode === 'domain') {
+      const activeEndpoint = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || 'localhost';
+      return {
+        activeEndpoint,
+        source: 'Configured Domain',
+        domain: activeEndpoint,
+        publicIp,
+        lanIp
+      };
+    }
+
+    if (mode === 'lan') {
+      return {
+        activeEndpoint: lanIp,
+        source: 'Forced Local LAN IP',
+        domain: '',
+        publicIp,
+        lanIp
+      };
+    }
+
+    if (mode === 'public') {
+      return {
+        activeEndpoint: publicIp !== 'Unavailable' ? publicIp : lanIp,
+        source: 'Forced Public IP',
+        domain: '',
+        publicIp,
+        lanIp
+      };
+    }
+
+    // 2. Fallback override if manualIp is passed directly (backward compatibility)
+    if (manualIp && manualIp !== '0.0.0.0') {
+      return {
+        activeEndpoint: manualIp,
+        source: 'Manual Overridden IP',
+        domain: '',
+        publicIp: manualIp,
+        lanIp
+      };
+    }
+
+    // 3. Default: 'auto'
+    const domain = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
     if (domain) {
       return {
         activeEndpoint: domain,
         source: 'Configured Domain',
         domain,
-        publicIp: await detectPublicIp() || 'Unavailable',
-        lanIp: getLocalIp()
+        publicIp,
+        lanIp
       };
     }
 
-    // 2. Current Public IP (only when running on a public VPS without a domain)
-    const publicIp = await detectPublicIp();
-    const lanIp = getLocalIp();
-
-    if (!isLocalEnvironment() && publicIp) {
+    if (!isLocalEnvironment() && publicIp !== 'Unavailable') {
       return {
         activeEndpoint: publicIp,
         source: 'Detected Public IP',
@@ -1076,12 +1167,11 @@ segment3.ts
       };
     }
 
-    // 3. Current LAN IP
     return {
       activeEndpoint: lanIp,
       source: 'Detected LAN IP',
       domain: '',
-      publicIp: publicIp || 'Unavailable',
+      publicIp,
       lanIp
     };
   }
@@ -1155,21 +1245,170 @@ segment3.ts
       const dashboardUrl = `${protocol}://${details.activeEndpoint}`;
       const apiUrl = `${protocol}://${details.activeEndpoint}/api`;
       const rtmpUrl = `rtmp://${details.activeEndpoint}/live`;
-      const hlsUrl = `${protocol}://${details.activeEndpoint}/hls/{stream_key}/index.m3u8`;
+      const hlsUrl = `${protocol}://${details.activeEndpoint}/hls/{stream_key}/master.m3u8`;
+      const dashUrl = `${protocol}://${details.activeEndpoint}/dash/{stream_key}/manifest.mpd`;
 
       res.json({
         lanIp: details.lanIp,
         publicIp: details.publicIp,
         activeEndpoint: details.activeEndpoint,
+        configuredDomain: serverSettings.customDomain || '',
+        deploymentMode: serverSettings.deploymentMode,
         dashboardUrl,
         apiUrl,
         rtmpUrl,
         hlsUrl,
+        dashUrl,
         source: details.source
       });
     } catch (err) {
       console.error('Error fetching network details:', err);
       res.status(500).json({ error: 'Failed to retrieve network details' });
+    }
+  });
+
+  // GET Settings & Network
+  app.get('/api/settings/network', authenticateToken, async (req: any, res) => {
+    try {
+      const details = await resolveRuntimeEndpoint(req);
+      const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(details.activeEndpoint);
+      const protocol = isIp ? 'http' : 'https';
+
+      res.json({
+        deploymentMode: serverSettings.deploymentMode,
+        configuredDomain: serverSettings.customDomain || '',
+        manualIp: serverSettings.manualIp || '',
+        lanIp: details.lanIp,
+        publicIp: details.publicIp,
+        activeEndpoint: details.activeEndpoint,
+        dashboardUrl: `${protocol}://${details.activeEndpoint}`,
+        apiUrl: `${protocol}://${details.activeEndpoint}/api`,
+        rtmpUrl: `rtmp://${details.activeEndpoint}/live`,
+        hlsUrl: `${protocol}://${details.activeEndpoint}/hls/{stream_key}/master.m3u8`,
+        dashUrl: `${protocol}://${details.activeEndpoint}/dash/{stream_key}/manifest.mpd`,
+        source: details.source
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch network settings' });
+    }
+  });
+
+  // POST Update Settings & Network (Admin only)
+  app.post('/api/settings/network', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const { deploymentMode, configuredDomain, manualIp } = req.body;
+      
+      if (deploymentMode && !['auto', 'lan', 'public', 'domain'].includes(deploymentMode)) {
+        return res.status(400).json({ error: 'Invalid deployment mode' });
+      }
+
+      if (deploymentMode) serverSettings.deploymentMode = deploymentMode;
+      if (configuredDomain !== undefined) serverSettings.customDomain = configuredDomain;
+      if (manualIp !== undefined) serverSettings.manualIp = manualIp;
+
+      saveServerSettings();
+
+      const details = await resolveRuntimeEndpoint(req);
+      const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(details.activeEndpoint);
+      const protocol = isIp ? 'http' : 'https';
+
+      res.json({
+        message: 'Network configuration updated successfully',
+        settings: {
+          deploymentMode: serverSettings.deploymentMode,
+          configuredDomain: serverSettings.customDomain,
+          manualIp: serverSettings.manualIp
+        },
+        resolved: {
+          lanIp: details.lanIp,
+          publicIp: details.publicIp,
+          activeEndpoint: details.activeEndpoint,
+          dashboardUrl: `${protocol}://${details.activeEndpoint}`,
+          apiUrl: `${protocol}://${details.activeEndpoint}/api`,
+          rtmpUrl: `rtmp://${details.activeEndpoint}/live`,
+          hlsUrl: `${protocol}://${details.activeEndpoint}/hls/{stream_key}/master.m3u8`,
+          dashUrl: `${protocol}://${details.activeEndpoint}/dash/{stream_key}/manifest.mpd`,
+          source: details.source
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to update network settings' });
+    }
+  });
+
+  // POST Security configuration (Change Username / Password / Force Reset)
+  app.post('/api/settings/security/update', authenticateToken, async (req: any, res) => {
+    try {
+      const { targetUserId, newUsername, newPassword, forceReset } = req.body;
+      const callerId = req.user.id;
+      const isCallerAdmin = req.user.role === 'admin';
+
+      let userIdToUpdate = callerId;
+      if (targetUserId && parseInt(targetUserId, 10) !== callerId) {
+        if (!isCallerAdmin) {
+          return res.status(403).json({ error: 'Permission denied: Only administrators can update other users' });
+        }
+        userIdToUpdate = parseInt(targetUserId, 10);
+      }
+
+      const user = await db.getUserById(userIdToUpdate);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const updates: Partial<any> = {};
+
+      if (newUsername && newUsername.trim()) {
+        const cleanedUsername = newUsername.trim();
+        if (cleanedUsername.length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+        }
+        const existing = await db.getUserByUsername(cleanedUsername);
+        if (existing && existing.id !== userIdToUpdate) {
+          return res.status(400).json({ error: 'Username already in use' });
+        }
+        updates.username = cleanedUsername;
+      }
+
+      if (newPassword && newPassword.trim()) {
+        const cleanedPassword = newPassword.trim();
+        if (cleanedPassword.length < 6) {
+          return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+        }
+        const salt = await bcrypt.genSalt(10);
+        updates.password_hash = await bcrypt.hash(cleanedPassword, salt);
+        
+        // If password is changed, clear any forced reset
+        forcedPasswordResets.delete(userIdToUpdate);
+        saveForcedResets();
+      }
+
+      if (forceReset !== undefined) {
+        if (!isCallerAdmin) {
+          return res.status(403).json({ error: 'Permission denied: Only administrators can force password resets' });
+        }
+        if (forceReset) {
+          forcedPasswordResets.add(userIdToUpdate);
+        } else {
+          forcedPasswordResets.delete(userIdToUpdate);
+        }
+        saveForcedResets();
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await db.updateUser(userIdToUpdate, updates);
+      }
+
+      res.json({
+        message: 'Security configuration updated successfully',
+        userId: userIdToUpdate,
+        forceResetEnabled: forcedPasswordResets.has(userIdToUpdate)
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to update security settings' });
     }
   });
 

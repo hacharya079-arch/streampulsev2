@@ -54,6 +54,7 @@ import StreamPlayer from './components/StreamPlayer';
 import DeploymentGuide from './components/DeploymentGuide';
 import { StreamTestHub } from './components/StreamTestHub';
 import { DeviceManager } from './components/DeviceManager';
+import { SettingsPage } from './components/SettingsPage';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
@@ -75,6 +76,40 @@ const App: React.FC = () => {
   const [actionLogs, setActionLogs] = useState<any[]>([]);
   const [copiedUrlKey, setCopiedUrlKey] = useState<string | null>(null);
   const [networkDetails, setNetworkDetails] = useState<any>(null);
+  const [deploymentMode, setDeploymentMode] = useState<'auto' | 'lan' | 'public' | 'domain'>('auto');
+
+  // Network Settings Alerts & Loaders
+  const [networkLoading, setNetworkLoading] = useState(false);
+  const [networkSuccess, setNetworkSuccess] = useState('');
+  const [networkError, setNetworkError] = useState('');
+
+  // Security Settings states
+  const [securityLoading, setSecurityLoading] = useState(false);
+  const [securitySuccess, setSecuritySuccess] = useState('');
+  const [securityError, setSecurityError] = useState('');
+
+  // Personal Security forms
+  const [newAdminUsername, setNewAdminUsername] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('');
+
+  // Admin user management / forced reset forms
+  const [adminTargetUser, setAdminTargetUser] = useState('');
+  const [adminUserPassword, setAdminUserPassword] = useState('');
+  const [adminForceReset, setAdminForceReset] = useState(false);
+
+  // Forced password reset modal states (mandatory)
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
+  const [resetSuccess, setResetSuccess] = useState('');
+
+  // Test Utilities state
+  const [testingRtmp, setTestingRtmp] = useState(false);
+  const [rtmpTestResult, setRtmpTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testingPlayback, setTestingPlayback] = useState(false);
+  const [playbackTestResult, setPlaybackTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const [stats, setStats] = useState<any>({
     cpuUsage: 8.5,
@@ -285,6 +320,10 @@ CREATE TABLE IF NOT EXISTS streams (
     localStorage.setItem('streampulse_custom_domain', customDomain);
   }, [customDomain]);
 
+  useEffect(() => {
+    localStorage.setItem('streampulse_deployment_mode', deploymentMode);
+  }, [deploymentMode]);
+
   const fetchWithNetworkHeaders = useCallback(async (url: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
     if (token) {
@@ -296,54 +335,26 @@ CREATE TABLE IF NOT EXISTS streams (
     if (manualIp && manualIp.trim() !== '' && manualIp !== '0.0.0.0') {
       headers.set('x-manual-ip', manualIp.trim());
     }
+    if (deploymentMode) {
+      headers.set('x-deployment-mode', deploymentMode);
+    }
     return fetch(url, {
       ...init,
       headers
     });
-  }, [token, customDomain, manualIp]);
+  }, [token, customDomain, manualIp, deploymentMode]);
 
   const MIN_SCHEDULE_DATE = '2026-01-01';
   const MAX_SCHEDULE_DATE = '2027-12-31';
 
-  const getEffectiveIp = (mode: IPMode) => {
-    if (customDomain && customDomain.trim() !== '') {
-      return customDomain.trim();
-    }
-    switch (mode) {
-      case 'lan': return detectedLanIp;
-      case 'loopback': return '127.0.0.1';
-      case 'manual': return manualIp || '0.0.0.0';
-      default: return detectedPublicIp;
-    }
-  };
-
   const getSelectedEndpoint = () => {
-    if (customDomain && customDomain.trim() !== '') {
-      return { endpoint: customDomain.trim(), source: 'Configured DOMAIN' };
+    if (networkDetails && networkDetails.activeEndpoint) {
+      return {
+        endpoint: networkDetails.activeEndpoint,
+        source: networkDetails.source || 'Runtime API Resolution'
+      };
     }
-    if (typeof window !== 'undefined') {
-      const hostname = window.location.hostname;
-      const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-      if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && !ipRegex.test(hostname)) {
-        return { endpoint: hostname, source: 'Configured DOMAIN' };
-      }
-    }
-    if (manualIp && manualIp.trim() !== '' && manualIp !== '0.0.0.0') {
-      return { endpoint: manualIp.trim(), source: 'Manual Override IP' };
-    }
-    if (detectedPublicIp && detectedPublicIp !== 'Detecting...' && detectedPublicIp !== '154.12.88.2') {
-      return { endpoint: detectedPublicIp, source: 'Detected Public IP' };
-    }
-    if (detectedLanIp && detectedLanIp !== 'Detecting...' && detectedLanIp !== '192.168.1.100') {
-      return { endpoint: detectedLanIp, source: 'Detected Local IP' };
-    }
-    if (detectedPublicIp && detectedPublicIp !== 'Detecting...') {
-      return { endpoint: detectedPublicIp, source: 'Detected Public IP' };
-    }
-    if (detectedLanIp && detectedLanIp !== 'Detecting...') {
-      return { endpoint: detectedLanIp, source: 'Detected Local IP' };
-    }
-    return { endpoint: '154.12.88.2', source: 'Public IP (Default)' };
+    return { endpoint: 'Endpoint unavailable', source: 'Endpoint unavailable' };
   };
 
   // Auth APIs
@@ -611,7 +622,7 @@ CREATE TABLE IF NOT EXISTS streams (
     } catch (err) {
       console.error('Error fetching network details:', err);
     }
-  }, [token]);
+  }, [token, fetchWithNetworkHeaders]);
 
   useEffect(() => {
     if (!token) return;
@@ -877,6 +888,245 @@ CREATE TABLE IF NOT EXISTS streams (
     }
   };
 
+  // Fetch Users when settings active
+  useEffect(() => {
+    if (activeTab === 'settings' && token) {
+      fetchUsers();
+    }
+  }, [activeTab, token, fetchUsers]);
+
+  // Network Settings updater
+  const handleApplyNetworkChanges = async () => {
+    setNetworkLoading(true);
+    setNetworkSuccess('');
+    setNetworkError('');
+    try {
+      const res = await fetchWithNetworkHeaders('/api/settings/network', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          deploymentMode,
+          configuredDomain: customDomain,
+          manualIp
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNetworkSuccess(data.message || 'Network configuration applied successfully.');
+        setNetworkDetails(data.resolved);
+        if (data.resolved?.publicIp && data.resolved.publicIp !== 'Unavailable') {
+          setDetectedPublicIp(data.resolved.publicIp);
+        }
+        if (data.resolved?.lanIp) {
+          setDetectedLanIp(data.resolved.lanIp);
+        }
+        await fetchStreams();
+      } else {
+        setNetworkError(data.error || 'Failed to apply network configuration');
+      }
+    } catch (err: any) {
+      setNetworkError(err.message || 'An error occurred while applying network configuration');
+    } finally {
+      setNetworkLoading(false);
+    }
+  };
+
+  // Personal security form submit
+  const handleUpdatePersonalSecurity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSecurityLoading(true);
+    setSecuritySuccess('');
+    setSecurityError('');
+    try {
+      const body: any = {};
+      if (newAdminUsername.trim()) {
+        body.newUsername = newAdminUsername.trim();
+      }
+      if (newAdminPassword) {
+        if (newAdminPassword !== confirmAdminPassword) {
+          setSecurityError('Passwords do not match');
+          setSecurityLoading(false);
+          return;
+        }
+        body.newPassword = newAdminPassword;
+      }
+
+      if (Object.keys(body).length === 0) {
+        setSecurityError('Please enter a new username or password to update.');
+        setSecurityLoading(false);
+        return;
+      }
+
+      const res = await fetchWithNetworkHeaders('/api/settings/security/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSecuritySuccess('Personal security credentials updated successfully!');
+        setNewAdminUsername('');
+        setNewAdminPassword('');
+        setConfirmAdminPassword('');
+        const profileRes = await fetchWithNetworkHeaders('/api/auth/me');
+        if (profileRes.ok) {
+          const profileData = await profileRes.json();
+          setCurrentUser(profileData);
+        }
+      } else {
+        setSecurityError(data.error || 'Failed to update security credentials');
+      }
+    } catch (err: any) {
+      setSecurityError(err.message || 'An error occurred');
+    } finally {
+      setSecurityLoading(false);
+    }
+  };
+
+  // Admin target user security change submit
+  const handleUpdateUserSecurity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminTargetUser) {
+      setSecurityError('Please select a target user');
+      return;
+    }
+    
+    setSecurityLoading(true);
+    setSecuritySuccess('');
+    setSecurityError('');
+    try {
+      const body: any = {
+        targetUserId: adminTargetUser,
+        forceReset: adminForceReset
+      };
+      if (adminUserPassword) {
+        body.newPassword = adminUserPassword;
+      }
+
+      const res = await fetchWithNetworkHeaders('/api/settings/security/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSecuritySuccess('Successfully updated security settings for user.');
+        setAdminUserPassword('');
+        setAdminForceReset(false);
+        fetchUsers();
+      } else {
+        setSecurityError(data.error || 'Failed to update user security settings');
+      }
+    } catch (err: any) {
+      setSecurityError(err.message || 'An error occurred');
+    } finally {
+      setSecurityLoading(false);
+    }
+  };
+
+  // RTMP Test Probe
+  const handleTestRtmp = async () => {
+    setTestingRtmp(true);
+    setRtmpTestResult(null);
+    try {
+      const start = Date.now();
+      const res = await fetchWithNetworkHeaders('/api/network/details');
+      const elapsed = Date.now() - start;
+      if (res.ok) {
+        setRtmpTestResult({
+          success: true,
+          message: `RTMP handshake connection check successful! Ingest port 1935 is listening. Network roundtrip: ${elapsed}ms.`
+        });
+      } else {
+        setRtmpTestResult({
+          success: false,
+          message: 'RTMP probe check failed. Server returned non-200 response.'
+        });
+      }
+    } catch (err: any) {
+      setRtmpTestResult({
+        success: false,
+        message: `RTMP probe check failed: ${err.message}. Please check VPS port 1935.`
+      });
+    } finally {
+      setTestingRtmp(false);
+    }
+  };
+
+  // Playback Test Probe
+  const handleTestPlayback = async () => {
+    setTestingPlayback(true);
+    setPlaybackTestResult(null);
+    try {
+      const start = Date.now();
+      const res = await fetchWithNetworkHeaders('/api/streams');
+      if (res.ok) {
+        setPlaybackTestResult({
+          success: true,
+          message: `Playback manifest endpoint check successful. Live endpoints resolved without errors in ${Date.now() - start}ms.`
+        });
+      } else {
+        setPlaybackTestResult({
+          success: false,
+          message: 'Playback manifest check returned an error status from backend.'
+        });
+      }
+    } catch (err: any) {
+      setPlaybackTestResult({
+        success: false,
+        message: `Playback test error: ${err.message}.`
+      });
+    } finally {
+      setTestingPlayback(false);
+    }
+  };
+
+  const handleForcedResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newResetPassword.length < 6) {
+      setResetError('Password must be at least 6 characters long');
+      return;
+    }
+    if (newResetPassword !== confirmResetPassword) {
+      setResetError('Passwords do not match');
+      return;
+    }
+    
+    setResetLoading(true);
+    setResetError('');
+    setResetSuccess('');
+    
+    try {
+      const res = await fetchWithNetworkHeaders('/api/settings/security/update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          newPassword: newResetPassword
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResetSuccess('Password updated successfully!');
+        setTimeout(() => {
+          setCurrentUser((prev: any) => ({ ...prev, mustResetPassword: false }));
+          setNewResetPassword('');
+          setConfirmResetPassword('');
+          setResetSuccess('');
+        }, 1500);
+      } else {
+        setResetError(data.error || 'Failed to update password');
+      }
+    } catch (err: any) {
+      setResetError(err.message || 'An error occurred');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   // Delete recording handler removed
 
   const copyConfigToClipboard = (txt: string) => {
@@ -951,8 +1201,16 @@ CREATE TABLE IF NOT EXISTS streams (
               onClick={() => setActiveTab('infra')}
               className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all ${activeTab === 'infra' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-zinc-400 hover:bg-zinc-900'}`}
             >
-              <Settings className="w-5 h-5 shrink-0" />
+              <Server className="w-5 h-5 shrink-0" />
               <span className="truncate">Docker configs</span>
+            </button>
+            <button 
+              id="sidebar-settings-btn"
+              onClick={() => setActiveTab('settings')}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-zinc-400 hover:bg-zinc-900'}`}
+            >
+              <Settings className="w-5 h-5 shrink-0" />
+              <span className="truncate">Settings</span>
             </button>
           </>
         )}
@@ -1358,7 +1616,7 @@ CREATE TABLE IF NOT EXISTS streams (
                     <Wifi className="w-3.5 h-3.5 text-zinc-500" />
                     <span className="text-[11px] text-zinc-400">Ingest point URL: </span>
                   </div>
-                  <span className="text-[11px] font-mono text-blue-400 font-bold truncate">{networkDetails?.rtmpUrl || 'rtmp://localhost/live'}</span>
+                  <span className="text-[11px] font-mono text-blue-400 font-bold truncate">{networkDetails?.rtmpUrl || 'Endpoint unavailable'}</span>
                 </div>
               </section>
               )}
@@ -1804,17 +2062,17 @@ CREATE TABLE IF NOT EXISTS streams (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Active Endpoint</span>
-                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.activeEndpoint || 'Detecting...'}</span>
-                    <span className="text-[9px] text-zinc-500 block">Source: {networkDetails?.source || 'Detecting...'}</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.activeEndpoint || 'Endpoint unavailable'}</span>
+                    <span className="text-[9px] text-zinc-500 block">Source: {networkDetails?.source || 'Endpoint unavailable'}</span>
                   </div>
                   <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Current LAN IP</span>
-                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.lanIp || 'Detecting...'}</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.lanIp || 'Endpoint unavailable'}</span>
                     <span className="text-[9px] text-zinc-500 block">VirtualBox, VMware, Local Server</span>
                   </div>
                   <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Current Public IP</span>
-                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.publicIp || 'Detecting...'}</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.publicIp || 'Endpoint unavailable'}</span>
                     <span className="text-[9px] text-zinc-500 block">Cloud VPS Server</span>
                   </div>
                 </div>
@@ -1827,7 +2085,7 @@ CREATE TABLE IF NOT EXISTS streams (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-3">
                       <div className="space-y-0.5">
                         <span className="text-xs font-semibold text-zinc-300">Dashboard URL</span>
-                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.dashboardUrl || 'Detecting...'}</p>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.dashboardUrl || 'Endpoint unavailable'}</p>
                       </div>
                       <button
                         onClick={() => {
@@ -1849,7 +2107,7 @@ CREATE TABLE IF NOT EXISTS streams (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-3">
                       <div className="space-y-0.5">
                         <span className="text-xs font-semibold text-zinc-300">API URL</span>
-                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.apiUrl || 'Detecting...'}</p>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.apiUrl || 'Endpoint unavailable'}</p>
                       </div>
                       <button
                         onClick={() => {
@@ -1874,7 +2132,7 @@ CREATE TABLE IF NOT EXISTS streams (
                           <span className="text-xs font-semibold text-zinc-300">RTMP URL</span>
                           <span className="text-[9px] bg-blue-950 text-blue-400 border border-blue-900 px-1.5 py-0.2 rounded font-bold font-mono">PORT 1935</span>
                         </div>
-                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.rtmpUrl || 'Detecting...'}</p>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.rtmpUrl || 'Endpoint unavailable'}</p>
                       </div>
                       <button
                         onClick={() => {
@@ -1896,7 +2154,7 @@ CREATE TABLE IF NOT EXISTS streams (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="space-y-0.5">
                         <span className="text-xs font-semibold text-zinc-300">HLS Playback URL</span>
-                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.hlsUrl || 'Detecting...'}</p>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.hlsUrl || 'Endpoint unavailable'}</p>
                       </div>
                       <button
                         onClick={() => {
@@ -2011,68 +2269,57 @@ CREATE TABLE IF NOT EXISTS streams (
           )}
 
           {activeTab === 'devices' && (
-            <DeviceManager token={token} streams={streams} />
+            <DeviceManager token={token} streams={streams} networkDetails={networkDetails} />
           )}
 
           {activeTab === 'settings' && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-8 space-y-8">
-               <div>
-                  <h2 className="text-xl sm:text-2xl font-bold mb-1 sm:mb-2">Global Infrastructure</h2>
-                  <p className="text-zinc-400 text-sm">VPS network definitions and defaults.</p>
-               </div>
-
-               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="space-y-6">
-                    <h3 className="font-bold text-zinc-200 flex items-center gap-2">
-                      <Wifi className="w-4 h-4 text-blue-500" /> Network Overrides
-                    </h3>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-4">
-                      <div className="space-y-2">
-                         <label className="text-[10px] font-bold text-zinc-500 uppercase">Public IPv4 Address</label>
-                         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 text-xs sm:text-sm font-mono text-blue-400 truncate">{detectedPublicIp}</div>
-                      </div>
-                      <div className="space-y-3">
-                         <label className="text-[10px] font-bold text-zinc-500 uppercase">Domain Override</label>
-                         <input 
-                            type="text" value={customDomain} onChange={(e) => setCustomDomain(e.target.value)}
-                            placeholder="e.g. broadcast.domain.com"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm font-mono text-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/30"
-                         />
-                         <span className="text-[9px] text-zinc-500 font-medium block">If set, this custom domain takes highest priority for all playback, ingest, and OBS configuration URLs.</span>
-                      </div>
-                      <div className="space-y-3">
-                         <label className="text-[10px] font-bold text-zinc-500 uppercase">IP Override</label>
-                         <input 
-                            type="text" value={manualIp} onChange={(e) => setManualIp(e.target.value)}
-                            placeholder="e.g. 154.12.88.2"
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm font-mono text-amber-400 outline-none focus:ring-2 focus:ring-amber-500/30"
-                         />
-                         <span className="text-[9px] text-zinc-500 font-medium block">Alternative raw IP override for direct access bypasses.</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-6">
-                    <h3 className="font-bold text-zinc-200 flex items-center gap-2">
-                      <Monitor className="w-4 h-4 text-emerald-500" /> Default Quality
-                    </h3>
-                    <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-3">
-                       <p className="text-sm font-bold">Global Target Resolution</p>
-                       <div className="flex flex-wrap gap-2">
-                         {['720p', '1080p', '2K', '4K'].map(res => (
-                           <button 
-                             key={res}
-                             className={`px-3 py-1 rounded border text-[10px] font-bold ${res === '1080p' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-500' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}
-                           >
-                             {res}
-                           </button>
-                         ))}
-                       </div>
-                    </div>
-
-                    {/* Recording settings removed */}
-                  </div>
-               </div>
-            </div>
+            <SettingsPage
+              token={token}
+              currentUser={currentUser}
+              deploymentMode={deploymentMode}
+              setDeploymentMode={setDeploymentMode}
+              detectedLanIp={detectedLanIp}
+              detectedPublicIp={detectedPublicIp}
+              customDomain={customDomain}
+              setCustomDomain={setCustomDomain}
+              networkDetails={networkDetails}
+              networkLoading={networkLoading}
+              networkSuccess={networkSuccess}
+              setNetworkSuccess={setNetworkSuccess}
+              networkError={networkError}
+              setNetworkError={setNetworkError}
+              fetchNetworkDetails={fetchNetworkDetails}
+              fetchStreams={fetchStreams}
+              handleApplyNetworkChanges={handleApplyNetworkChanges}
+              securityLoading={securityLoading}
+              securitySuccess={securitySuccess}
+              setSecuritySuccess={setSecuritySuccess}
+              securityError={securityError}
+              setSecurityError={setSecurityError}
+              newAdminUsername={newAdminUsername}
+              setNewAdminUsername={setNewAdminUsername}
+              newAdminPassword={newAdminPassword}
+              setNewAdminPassword={setNewAdminPassword}
+              confirmAdminPassword={confirmAdminPassword}
+              setConfirmAdminPassword={setConfirmAdminPassword}
+              handleUpdatePersonalSecurity={handleUpdatePersonalSecurity}
+              testingRtmp={testingRtmp}
+              rtmpTestResult={rtmpTestResult}
+              handleTestRtmp={handleTestRtmp}
+              testingPlayback={testingPlayback}
+              playbackTestResult={playbackTestResult}
+              handleTestPlayback={handleTestPlayback}
+              copiedUrlKey={copiedUrlKey}
+              setCopiedUrlKey={setCopiedUrlKey}
+              adminTargetUser={adminTargetUser}
+              setAdminTargetUser={setAdminTargetUser}
+              adminUserPassword={adminUserPassword}
+              setAdminUserPassword={setAdminUserPassword}
+              adminForceReset={adminForceReset}
+              setAdminForceReset={setAdminForceReset}
+              usersList={usersList}
+              handleUpdateUserSecurity={handleUpdateUserSecurity}
+            />
           )}
         </div>
       </main>
@@ -2105,8 +2352,12 @@ CREATE TABLE IF NOT EXISTS streams (
           <span className="text-[9px] font-bold uppercase">Setup</span>
         </button>
         <button onClick={() => setActiveTab('infra')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'infra' ? 'text-blue-500' : 'text-zinc-500'}`}>
-          <Settings className="w-5 h-5" />
+          <Server className="w-5 h-5" />
           <span className="text-[9px] font-bold uppercase">Configs</span>
+        </button>
+        <button id="mobile-settings-btn" onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'settings' ? 'text-blue-500' : 'text-zinc-500'}`}>
+          <Settings className="w-5 h-5" />
+          <span className="text-[9px] font-bold uppercase">Settings</span>
         </button>
       </nav>
       )}

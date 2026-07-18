@@ -41,9 +41,10 @@ import { Device, DeviceGroup, DeviceSchedule, DeviceLog, PlaybackHistory, Stream
 interface DeviceManagerProps {
   token: string | null;
   streams: StreamSession[];
+  networkDetails?: any;
 }
 
-export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams }) => {
+export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams, networkDetails }) => {
   // States
   const [devices, setDevices] = useState<Device[]>([]);
   const [groups, setGroups] = useState<DeviceGroup[]>([]);
@@ -155,9 +156,14 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams }) 
   // Establish real-time WebSocket connection for Dashboards
   useEffect(() => {
     if (!token) return;
+    if (!networkDetails || !networkDetails.activeEndpoint) {
+      console.log('[Dashboard WS] Endpoint unavailable. Waiting for network details...');
+      return;
+    }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/dashboard-ws`;
+    const isSecure = networkDetails.dashboardUrl?.startsWith('https:');
+    const wsProtocol = isSecure ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${networkDetails.activeEndpoint}/api/dashboard-ws`;
     
     const connectWs = () => {
       console.log('[Dashboard WS] Connecting to:', wsUrl);
@@ -230,7 +236,7 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams }) 
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
-  }, [token, selectedDevice?.id]);
+  }, [token, selectedDevice?.id, networkDetails]);
 
   // Fetch device specific logs and history when device selection changes
   useEffect(() => {
@@ -353,7 +359,9 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams }) 
         },
         body: JSON.stringify({
           targetVersion: otaTargetVersion,
-          updateUrl: `${window.location.protocol}//${window.location.host}/streampulse-agent-latest.py`
+          updateUrl: networkDetails?.dashboardUrl 
+            ? `${networkDetails.dashboardUrl}/streampulse-agent-latest.py` 
+            : 'Endpoint unavailable'
         })
       });
       const data = await res.json();
@@ -732,8 +740,8 @@ import asyncio
 
 # Config settings
 CONFIG_FILE = os.path.expanduser('~/.streampulse_config.json')
-CORE_SERVER = "${window.location.protocol}//${window.location.host}"
-WS_SERVER = "ws://${window.location.host}/api/device-ws" if "${window.location.protocol}" == "http:" else "wss://${window.location.host}/api/device-ws"
+CORE_SERVER = "${networkDetails?.dashboardUrl || 'Endpoint unavailable'}"
+WS_SERVER = "${networkDetails?.dashboardUrl?.startsWith('https:') ? 'wss' : 'ws'}://${networkDetails?.activeEndpoint || 'Endpoint unavailable'}/api/device-ws"
 
 device_state = {
     "paired": False,
