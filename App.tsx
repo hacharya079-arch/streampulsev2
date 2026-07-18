@@ -13,6 +13,8 @@ import {
   MessageSquare,
   Key,
   Globe,
+  Copy,
+  Server,
   Monitor,
   Edit3,
   Wifi,
@@ -71,6 +73,8 @@ const App: React.FC = () => {
   const [confirmRemovalId, setConfirmRemovalId] = useState<string | null>(null);
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<number | null>(null);
   const [actionLogs, setActionLogs] = useState<any[]>([]);
+  const [copiedUrlKey, setCopiedUrlKey] = useState<string | null>(null);
+  const [networkDetails, setNetworkDetails] = useState<any>(null);
 
   const [stats, setStats] = useState<any>({
     cpuUsage: 8.5,
@@ -586,21 +590,44 @@ CREATE TABLE IF NOT EXISTS streams (
     }
   }, [token]);
 
+  const fetchNetworkDetails = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/network/details', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNetworkDetails(data);
+        if (data.publicIp && data.publicIp !== 'Unavailable') {
+          setDetectedPublicIp(data.publicIp);
+        }
+        if (data.lanIp) {
+          setDetectedLanIp(data.lanIp);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching network details:', err);
+    }
+  }, [token]);
+
   useEffect(() => {
     if (!token) return;
     fetchStreams();
     fetchStats();
     fetchActionLogs();
+    fetchNetworkDetails();
 
-    // Poll server statistics, streams, and logs every 3 seconds
+    // Poll server statistics, streams, logs, and network details every 3 seconds
     const interval = setInterval(() => {
       fetchStreams();
       fetchStats();
       fetchActionLogs();
+      fetchNetworkDetails();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [token, fetchStreams, fetchStats, fetchActionLogs]);
+  }, [token, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
 
   // Handle Stream Creation via API
   const handleCreateStream = async () => {
@@ -1773,6 +1800,132 @@ CREATE TABLE IF NOT EXISTS streams (
 
           {activeTab === 'infra' && (
             <div className="space-y-6">
+              {/* Network Information Card */}
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-8 space-y-6">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+                    <Network className="w-6 h-6 text-blue-500" />
+                    Network Information
+                  </h2>
+                  <p className="text-zinc-400 text-sm">Real-time detected server endpoints, ingestion paths, and playback links.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Active Endpoint</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.activeEndpoint || 'Detecting...'}</span>
+                    <span className="text-[9px] text-zinc-500 block">Source: {networkDetails?.source || 'Detecting...'}</span>
+                  </div>
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Current LAN IP</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.lanIp || 'Detecting...'}</span>
+                    <span className="text-[9px] text-zinc-500 block">VirtualBox, VMware, Local Server</span>
+                  </div>
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Current Public IP</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.publicIp || 'Detecting...'}</span>
+                    <span className="text-[9px] text-zinc-500 block">Cloud VPS Server</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 bg-zinc-950 border border-zinc-800 rounded-xl p-4 sm:p-6">
+                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider border-b border-zinc-800 pb-2">Dynamic Ingress & Access URLs</h3>
+                  
+                  <div className="space-y-4 pt-1">
+                    {/* Dashboard URL */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-3">
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-semibold text-zinc-300">Dashboard URL</span>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.dashboardUrl || 'Detecting...'}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(networkDetails?.dashboardUrl || '');
+                          setCopiedUrlKey('dashboard');
+                          setTimeout(() => setCopiedUrlKey(null), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
+                      >
+                        {copiedUrlKey === 'dashboard' ? (
+                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* API URL */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-3">
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-semibold text-zinc-300">API URL</span>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.apiUrl || 'Detecting...'}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(networkDetails?.apiUrl || '');
+                          setCopiedUrlKey('api');
+                          setTimeout(() => setCopiedUrlKey(null), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
+                      >
+                        {copiedUrlKey === 'api' ? (
+                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* RTMP URL */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-zinc-300">RTMP URL</span>
+                          <span className="text-[9px] bg-blue-950 text-blue-400 border border-blue-900 px-1.5 py-0.2 rounded font-bold font-mono">PORT 1935</span>
+                        </div>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.rtmpUrl || 'Detecting...'}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(networkDetails?.rtmpUrl || '');
+                          setCopiedUrlKey('rtmp');
+                          setTimeout(() => setCopiedUrlKey(null), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
+                      >
+                        {copiedUrlKey === 'rtmp' ? (
+                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* HLS URL */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-semibold text-zinc-300">HLS Playback URL</span>
+                        <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.hlsUrl || 'Detecting...'}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(networkDetails?.hlsUrl || '');
+                          setCopiedUrlKey('hls');
+                          setTimeout(() => setCopiedUrlKey(null), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
+                      >
+                        {copiedUrlKey === 'hls' ? (
+                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-8 space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>

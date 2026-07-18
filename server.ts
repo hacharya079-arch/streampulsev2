@@ -991,42 +991,101 @@ segment3.ts
     return '127.0.0.1';
   }
 
-  async function augmentStreamWithPlayback(s: any, req: any) {
-    if (!s) return null;
-    const publicIp = await detectPublicIp() || '154.12.88.2';
-    const localIp = getLocalIp();
-    const domain = process.env.DOMAIN || '';
-    
-    let activeEndpoint = publicIp;
-    if (domain) {
-      activeEndpoint = domain;
-    } else if (req && req.headers && req.headers.host) {
-      const host = req.headers.host.split(':')[0];
-      const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-      if (host !== 'localhost' && host !== '127.0.0.1' && !ipRegex.test(host)) {
-        activeEndpoint = host;
+  function isLocalEnvironment(): boolean {
+    if (process.env.IS_LOCAL_ENV === 'true') return true;
+    if (process.env.IS_LOCAL_ENV === 'false') return false;
+
+    // Check systemd-detect-virt
+    try {
+      const { execSync } = require('child_process');
+      const virt = execSync('systemd-detect-virt 2>/dev/null || echo "none"', { timeout: 1000 }).toString().trim().toLowerCase();
+      if (virt === 'oracle' || virt === 'vmware' || virt === 'virtualbox' || virt === 'qemu') {
+        return true;
       }
+    } catch (e) {}
+
+    // Check DMI details if on Linux
+    try {
+      const { execSync } = require('child_process');
+      const productName = execSync('cat /sys/class/dmi/id/product_name 2>/dev/null || echo ""', { timeout: 1000 }).toString().trim().toLowerCase();
+      const sysVendor = execSync('cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo ""', { timeout: 1000 }).toString().trim().toLowerCase();
+      if (productName.includes('virtualbox') || productName.includes('vmware') ||
+          sysVendor.includes('virtualbox') || sysVendor.includes('vmware')) {
+        return true;
+      }
+    } catch (e) {}
+
+    // Fallback: Check if local IP starts with 192.168.x.x (typical LAN IP)
+    const localIp = getLocalIp();
+    if (localIp.startsWith('192.168.')) {
+      return true;
     }
-    
-    if (activeEndpoint === publicIp && !backendPublicIp) {
-      activeEndpoint = localIp;
+    return false;
+  }
+
+  async function resolveRuntimeEndpoint(req?: any) {
+    // 1. Configured Domain
+    const domain = process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
+    if (domain) {
+      return {
+        activeEndpoint: domain,
+        source: 'Configured Domain',
+        domain,
+        publicIp: await detectPublicIp() || 'Unavailable',
+        lanIp: getLocalIp()
+      };
     }
 
-    const portPart = req && req.headers && req.headers.host && req.headers.host.split(':')[1] ? `:${req.headers.host.split(':')[1]}` : '';
-    const finalHost = `${activeEndpoint}${portPart}`;
-    const proto = req && (req.secure || req.headers['x-forwarded-proto'] === 'https') ? 'https' : 'http';
+    // 2. Current Public IP (only when running on a public VPS without a domain)
+    const publicIp = await detectPublicIp();
+    const lanIp = getLocalIp();
+
+    if (!isLocalEnvironment() && publicIp) {
+      return {
+        activeEndpoint: publicIp,
+        source: 'Detected Public IP',
+        domain: '',
+        publicIp,
+        lanIp
+      };
+    }
+
+    // 3. Current LAN IP
+    return {
+      activeEndpoint: lanIp,
+      source: 'Detected LAN IP',
+      domain: '',
+      publicIp: publicIp || 'Unavailable',
+      lanIp
+    };
+  }
+
+  async function augmentStreamWithPlayback(s: any, req: any) {
+    if (!s) return null;
+    const details = await resolveRuntimeEndpoint(req);
+    const activeEndpoint = details.activeEndpoint;
+
+    // Use correct protocol based on whether active endpoint is a domain vs. raw IP
+    const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(activeEndpoint);
+    const proto = isIp ? 'http' : 'https';
+
+    // Override rtmpUrl and ingestIp dynamically at runtime
+    const dynamicRtmpUrl = `rtmp://${activeEndpoint}/live`;
+    const dynamicIngestIp = details.publicIp !== 'Unavailable' ? details.publicIp : details.lanIp;
 
     return {
       ...s,
+      rtmpUrl: dynamicRtmpUrl,
+      ingestIp: dynamicIngestIp,
       playbackUrls: {
-        baseUrl: `${proto}://${finalHost}`,
-        master: `${proto}://${finalHost}/hls/${s.streamKey}/master.m3u8`,
-        p1080: `${proto}://${finalHost}/hls/${s.streamKey}/1080p/index.m3u8`,
-        p720: `${proto}://${finalHost}/hls/${s.streamKey}/720p/index.m3u8`,
-        p480: `${proto}://${finalHost}/hls/${s.streamKey}/480p/index.m3u8`,
-        p360: `${proto}://${finalHost}/hls/${s.streamKey}/360p/index.m3u8`,
-        dash: `${proto}://${finalHost}/dash/${s.streamKey}/manifest.mpd`,
-        embed: `${proto}://${finalHost}/player/${s.streamKey}`
+        baseUrl: `${proto}://${activeEndpoint}`,
+        master: `${proto}://${activeEndpoint}/hls/${s.streamKey}/master.m3u8`,
+        p1080: `${proto}://${activeEndpoint}/hls/${s.streamKey}/1080p/index.m3u8`,
+        p720: `${proto}://${activeEndpoint}/hls/${s.streamKey}/720p/index.m3u8`,
+        p480: `${proto}://${activeEndpoint}/hls/${s.streamKey}/480p/index.m3u8`,
+        p360: `${proto}://${activeEndpoint}/hls/${s.streamKey}/360p/index.m3u8`,
+        dash: `${proto}://${activeEndpoint}/dash/${s.streamKey}/manifest.mpd`,
+        embed: `${proto}://${activeEndpoint}/player/${s.streamKey}`
       }
     };
   }
@@ -1063,37 +1122,24 @@ segment3.ts
 
   app.get('/api/network/details', authenticateToken, async (req: any, res: any) => {
     try {
-      const publicIp = await detectPublicIp() || '154.12.88.2';
-      const localIp = getLocalIp();
-      const domain = process.env.DOMAIN || '';
+      const details = await resolveRuntimeEndpoint(req);
+      const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(details.activeEndpoint);
+      const protocol = isIp ? 'http' : 'https';
       
-      let activeEndpoint = publicIp;
-      let source = 'Detected Public IP';
-      
-      if (domain) {
-        activeEndpoint = domain;
-        source = 'Configured DOMAIN';
-      } else if (req.headers.host) {
-        const host = req.headers.host.split(':')[0];
-        const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-        if (host !== 'localhost' && host !== '127.0.0.1' && !ipRegex.test(host)) {
-          activeEndpoint = host;
-          source = 'Configured DOMAIN';
-        }
-      }
-      
-      if (activeEndpoint === publicIp && !backendPublicIp) {
-        activeEndpoint = localIp;
-        source = 'Detected Local IP';
-      }
+      const dashboardUrl = `${protocol}://${details.activeEndpoint}`;
+      const apiUrl = `${protocol}://${details.activeEndpoint}/api`;
+      const rtmpUrl = `rtmp://${details.activeEndpoint}/live`;
+      const hlsUrl = `${protocol}://${details.activeEndpoint}/hls/{stream_key}/index.m3u8`;
 
       res.json({
-        activeEndpoint,
-        source,
-        domain,
-        publicIp,
-        localIp,
-        port: req.headers.host?.split(':')[1] || ''
+        lanIp: details.lanIp,
+        publicIp: details.publicIp,
+        activeEndpoint: details.activeEndpoint,
+        dashboardUrl,
+        apiUrl,
+        rtmpUrl,
+        hlsUrl,
+        source: details.source
       });
     } catch (err) {
       console.error('Error fetching network details:', err);
