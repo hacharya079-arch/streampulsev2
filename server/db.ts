@@ -168,10 +168,10 @@ let localState: LocalDBState = {
       viewers: 1240,
       status: 'live',
       startTime: new Date().toISOString(),
-      rtmpUrl: 'rtmp://154.12.88.2/live',
+      rtmpUrl: 'rtmp://localhost/live',
       streamKey: 'alex_secure_123',
       resolution: '1080p',
-      ingestIp: '154.12.88.2',
+      ingestIp: '127.0.0.1',
       bitrate: 6000,
       codec: 'H.264'
     },
@@ -183,10 +183,10 @@ let localState: LocalDBState = {
       viewers: 8520,
       status: 'live',
       startTime: new Date().toISOString(),
-      rtmpUrl: 'rtmp://192.168.1.45/live',
+      rtmpUrl: 'rtmp://localhost/live',
       streamKey: 'tournament_alpha',
       resolution: '4K',
-      ingestIp: '192.168.1.45',
+      ingestIp: '127.0.0.1',
       bitrate: 10000,
       codec: 'H.265'
     }
@@ -208,7 +208,11 @@ if (fs.existsSync(JSON_DB_PATH)) {
       ...localState,
       ...parsed,
       users: parsed.users || [],
-      streams: parsed.streams || [],
+      streams: (parsed.streams || []).map((s: any) => ({
+        ...s,
+        rtmpUrl: 'rtmp://localhost/live',
+        ingestIp: '127.0.0.1'
+      })),
       devices: parsed.devices || [],
       deviceGroups: parsed.deviceGroups || [],
       deviceGroupMembers: parsed.deviceGroupMembers || [],
@@ -884,6 +888,14 @@ export const db = {
 
   createStream: async (stream: Omit<StreamRecord, 'id' | 'viewers'>): Promise<StreamRecord> => {
     const id = Math.random().toString(36).substring(2, 11);
+    
+    // Ensure that we do not store any actual IP address (Requirement 5)
+    const dbStream = {
+      ...stream,
+      rtmpUrl: 'rtmp://localhost/live',
+      ingestIp: '127.0.0.1'
+    };
+
     if (usePostgres && pgPool) {
       await pgPool.query(
         `INSERT INTO streams 
@@ -891,43 +903,52 @@ export const db = {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
         [
           id,
-          stream.userId,
-          stream.title,
-          stream.broadcaster,
-          stream.streamKey,
-          stream.status,
-          stream.scheduledStart ? new Date(stream.scheduledStart) : null,
-          stream.rtmpUrl,
-          stream.resolution,
-          stream.bitrate,
-          stream.codec,
-          stream.ingestIp,
+          dbStream.userId,
+          dbStream.title,
+          dbStream.broadcaster,
+          dbStream.streamKey,
+          dbStream.status,
+          dbStream.scheduledStart ? new Date(dbStream.scheduledStart) : null,
+          dbStream.rtmpUrl,
+          dbStream.resolution,
+          dbStream.bitrate,
+          dbStream.codec,
+          dbStream.ingestIp,
           0,
-          stream.startTime ? new Date(stream.startTime) : null,
-          stream.width ?? null,
-          stream.height ?? null,
-          stream.fps ?? null,
-          stream.aspectRatio ?? null,
-          stream.videoCodec ?? null,
-          stream.audioCodec ?? null,
-          stream.preset ?? null,
-          stream.profile ?? null,
-          stream.pixelFormat ?? null,
-          stream.enabledProfiles ?? null
+          dbStream.startTime ? new Date(dbStream.startTime) : null,
+          dbStream.width ?? null,
+          dbStream.height ?? null,
+          dbStream.fps ?? null,
+          dbStream.aspectRatio ?? null,
+          dbStream.videoCodec ?? null,
+          dbStream.audioCodec ?? null,
+          dbStream.preset ?? null,
+          dbStream.profile ?? null,
+          dbStream.pixelFormat ?? null,
+          dbStream.enabledProfiles ?? null
         ]
       );
-      return { ...stream, id, viewers: 0 };
+      return { ...dbStream, id, viewers: 0 };
     }
-    const newStream: StreamRecord = { ...stream, id, viewers: 0 };
+    const newStream: StreamRecord = { ...dbStream, id, viewers: 0 };
     localState.streams.unshift(newStream);
     saveLocalState();
     return newStream;
   },
 
   updateStream: async (id: string, updates: Partial<StreamRecord>): Promise<StreamRecord | null> => {
+    // Ensure that we do not store any actual IP address (Requirement 5)
+    const dbUpdates = { ...updates };
+    if (dbUpdates.rtmpUrl !== undefined) {
+      dbUpdates.rtmpUrl = 'rtmp://localhost/live';
+    }
+    if (dbUpdates.ingestIp !== undefined) {
+      dbUpdates.ingestIp = '127.0.0.1';
+    }
+
     if (usePostgres && pgPool) {
       // Formulate dynamic SQL query
-      const keys = Object.keys(updates);
+      const keys = Object.keys(dbUpdates);
       if (keys.length === 0) return null;
       
       const setClause = keys.map((key, index) => {
@@ -941,7 +962,7 @@ export const db = {
       }).join(', ');
 
       const vals = keys.map(k => {
-        const val = (updates as any)[k];
+        const val = (dbUpdates as any)[k];
         if (k === 'startTime' || k === 'scheduledStart') {
           return val ? new Date(val) : null;
         }
@@ -999,7 +1020,7 @@ export const db = {
 
     const index = localState.streams.findIndex(s => s.id === id);
     if (index === -1) return null;
-    localState.streams[index] = { ...localState.streams[index], ...updates };
+    localState.streams[index] = { ...localState.streams[index], ...dbUpdates };
     saveLocalState();
     return localState.streams[index];
   },

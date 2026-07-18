@@ -1174,8 +1174,8 @@ segment3.ts
     try {
       // Auto-generate secure random stream key
       const streamKey = 'live_' + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-      const ingestIp = '154.12.88.2'; // Standard public fallback or request IP
-      const rtmpUrl = `rtmp://${ingestIp}/live`;
+      const ingestIp = '127.0.0.1';
+      const rtmpUrl = `rtmp://localhost/live`;
 
       const newStream = await db.createStream({
         userId: req.user.id,
@@ -1388,9 +1388,11 @@ segment3.ts
         await startFfMpegTranscoder(updatedStream.streamKey);
       }
 
+      const augmented = await augmentStreamWithPlayback(updatedStream, req);
+
       res.status(200).json({ 
         message: 'Profile deleted successfully',
-        stream: updatedStream,
+        stream: augmented,
         profiles
       });
     } catch (err) {
