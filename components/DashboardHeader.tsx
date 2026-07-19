@@ -33,7 +33,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ publicIp = '...', loc
             </span>
           </div>
           <div className="flex flex-col items-start md:items-end border-l border-zinc-800 pl-4 sm:pl-6 shrink-0">
-            <span className="text-[8px] sm:text-[10px] text-zinc-500 uppercase font-bold tracking-tighter">Local IP</span>
+            <span className="text-[8px] sm:text-[10px] text-zinc-500 uppercase font-bold tracking-tighter">Local LAN IP</span>
             <span className="text-xs sm:text-sm font-medium flex items-center gap-1.5 text-orange-400 font-mono">
               <Network className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
               {localIp}

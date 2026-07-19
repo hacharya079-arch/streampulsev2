@@ -962,7 +962,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   const currentProto = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[0] + ':' : 'Endpoint unavailable';
   const currentHost = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[1] || 'Endpoint unavailable' : 'Endpoint unavailable';
 
-  const rtmpPlayback = stream.rtmpUrl ? `${stream.rtmpUrl}/${stream.streamKey}` : 'Endpoint unavailable';
+  const rtmpPlayback = stream.rtmpUrl ? `${stream.rtmpUrl.replace('/ingest', '/live')}/${stream.streamKey}` : 'Endpoint unavailable';
   const hlsUrl = stream.playbackUrls?.master || 'Endpoint unavailable';
   const dashUrl = stream.playbackUrls?.dash || 'Endpoint unavailable';
   const embedUrl = stream.playbackUrls?.embed || 'Endpoint unavailable';
@@ -3171,7 +3171,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   </div>
                   <div className="flex items-center justify-between text-[10px] bg-black/60 p-1.5 rounded-lg border border-zinc-800/80">
                       <code className="text-emerald-400 truncate mr-1.5 font-mono flex-1">
-                        {revealedPlaybacks.rtmp ? rtmpPlayback : (currentHost === 'Endpoint unavailable' ? 'Endpoint unavailable' : `rtmp://${currentHost}/live/••••••`)}
+                        {revealedPlaybacks.rtmp ? rtmpPlayback : (currentHost === 'Endpoint unavailable' ? 'Endpoint unavailable' : `rtmp://${currentHost}/live/•••••`)}
                       </code>
                       <div className="flex items-center gap-1">
                         <button onClick={() => toggleReveal('rtmp')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">

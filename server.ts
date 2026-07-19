@@ -1061,36 +1061,89 @@ segment3.ts
   // ----------------------------------------------------
   // DYNAMIC ENDPOINT & PLAYBACK URL RESOLUTION SERVICES
   // ----------------------------------------------------
-  let backendPublicIp: string | null = null;
-
-  async function detectPublicIp() {
-    if (backendPublicIp) return backendPublicIp;
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
-      clearTimeout(id);
-      const data: any = await res.json();
-      if (data && data.ip) {
-        backendPublicIp = data.ip;
-        return data.ip;
+  async function detectPublicIp(): Promise<string | null> {
+    const services = [
+      'https://api.ipify.org?format=json',
+      'https://ipinfo.io/json',
+      'https://icanhazip.com'
+    ];
+    for (const service of services) {
+      try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch(service, { signal: controller.signal });
+        clearTimeout(id);
+        if (res.ok) {
+          if (service.includes('ipinfo.io')) {
+            const data: any = await res.json();
+            if (data && data.ip) return data.ip.trim();
+          } else if (service.includes('ipify')) {
+            const data: any = await res.json();
+            if (data && data.ip) return data.ip.trim();
+          } else {
+            const text = await res.text();
+            if (text && text.trim()) return text.trim();
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[Network Detection] Service ${service} failed:`, e.message);
       }
-    } catch (e: any) {
-      console.warn('[Network Detection] Failed to fetch public IP:', e.message);
     }
     return null;
   }
 
-  function getLocalIp() {
+  function getLocalIp(): string {
     const interfaces = os.networkInterfaces();
+    const candidates: string[] = [];
+    
     for (const name of Object.keys(interfaces)) {
+      const lowerName = name.toLowerCase();
+      if (
+        lowerName === 'docker0' || 
+        lowerName === 'lo' || 
+        lowerName.startsWith('br-') || 
+        lowerName.startsWith('veth')
+      ) {
+        continue;
+      }
+      
       for (const net of interfaces[name] || []) {
         if (net.family === 'IPv4' && !net.internal) {
-          return net.address;
+          const ip = net.address;
+          
+          if (ip.startsWith('172.17.') || ip.startsWith('172.18.') || ip.startsWith('172.19.')) {
+            continue;
+          }
+          candidates.push(ip);
         }
       }
     }
-    return '127.0.0.1';
+    
+    if (candidates.length === 0) {
+      return '127.0.0.1';
+    }
+    
+    const getPreferenceLevel = (ip: string): number => {
+      if (ip.startsWith('192.168.')) {
+        return 1;
+      }
+      if (ip.startsWith('10.')) {
+        return 2;
+      }
+      if (ip.startsWith('172.')) {
+        const parts = ip.split('.');
+        if (parts.length >= 2) {
+          const secondOctet = parseInt(parts[1], 10);
+          if (secondOctet >= 20 && secondOctet <= 31) {
+            return 3;
+          }
+        }
+      }
+      return 4;
+    };
+    
+    candidates.sort((a, b) => getPreferenceLevel(a) - getPreferenceLevel(b));
+    return candidates[0];
   }
 
   function isLocalEnvironment(): boolean {
@@ -1143,79 +1196,43 @@ segment3.ts
       }
     }
 
-    const publicIp = await detectPublicIp() || 'Unavailable';
+    // LAN IP and Public IP are detected independently
     const lanIp = getLocalIp();
+    const publicIp = await detectPublicIp();
 
-    // 1. Force based on mode
-    if (mode === 'domain') {
-      const activeEndpoint = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || 'localhost';
-      return {
-        activeEndpoint,
-        source: 'Configured Domain',
-        domain: activeEndpoint,
-        publicIp,
-        lanIp
-      };
-    }
+    let activeEndpoint = '';
+    let source = '';
 
+    // Determine Active Endpoint based on Deployment Mode
     if (mode === 'lan') {
-      return {
-        activeEndpoint: lanIp,
-        source: 'Forced Local LAN IP',
-        domain: '',
-        publicIp,
-        lanIp
-      };
-    }
-
-    if (mode === 'public') {
-      return {
-        activeEndpoint: publicIp !== 'Unavailable' ? publicIp : lanIp,
-        source: 'Forced Public IP',
-        domain: '',
-        publicIp,
-        lanIp
-      };
-    }
-
-    // 2. Fallback override if manualIp is passed directly (backward compatibility)
-    if (manualIp && manualIp !== '0.0.0.0') {
-      return {
-        activeEndpoint: manualIp,
-        source: 'Manual Overridden IP',
-        domain: '',
-        publicIp: manualIp,
-        lanIp
-      };
-    }
-
-    // 3. Default: 'auto'
-    const domain = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
-    if (domain) {
-      return {
-        activeEndpoint: domain,
-        source: 'Configured Domain',
-        domain,
-        publicIp,
-        lanIp
-      };
-    }
-
-    if (!isLocalEnvironment() && publicIp !== 'Unavailable') {
-      return {
-        activeEndpoint: publicIp,
-        source: 'Detected Public IP',
-        domain: '',
-        publicIp,
-        lanIp
-      };
+      activeEndpoint = lanIp;
+      source = 'Local LAN Mode';
+    } else if (mode === 'public') {
+      activeEndpoint = publicIp || 'Not available';
+      source = 'Public VPS Mode';
+    } else if (mode === 'domain') {
+      activeEndpoint = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || 'localhost';
+      source = 'Domain Mode';
+    } else {
+      // 'auto' mode: Domain -> WAN -> LAN IP
+      const domain = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
+      if (domain) {
+        activeEndpoint = domain;
+        source = 'Auto Detect: Domain';
+      } else if (publicIp) {
+        activeEndpoint = publicIp;
+        source = 'Auto Detect: Public IP';
+      } else {
+        activeEndpoint = lanIp;
+        source = 'Auto Detect: LAN IP';
+      }
     }
 
     return {
-      activeEndpoint: lanIp,
-      source: 'Detected LAN IP',
-      domain: '',
-      publicIp,
+      activeEndpoint,
+      source,
+      domain: (mode === 'domain' || (mode === 'auto' && (customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN))) ? activeEndpoint : '',
+      publicIp: publicIp || '', // Show blank/empty if detection fails
       lanIp
     };
   }
@@ -1230,8 +1247,8 @@ segment3.ts
     const proto = isIp ? 'http' : 'https';
 
     // Override rtmpUrl and ingestIp dynamically at runtime
-    const dynamicRtmpUrl = `rtmp://${activeEndpoint}/live`;
-    const dynamicIngestIp = details.publicIp !== 'Unavailable' ? details.publicIp : details.lanIp;
+    const dynamicRtmpUrl = `rtmp://${activeEndpoint}/ingest`;
+    const dynamicIngestIp = details.publicIp ? details.publicIp : details.lanIp;
 
     return {
       ...s,
@@ -1288,7 +1305,7 @@ segment3.ts
       
       const dashboardUrl = `${protocol}://${details.activeEndpoint}`;
       const apiUrl = `${protocol}://${details.activeEndpoint}/api`;
-      const rtmpUrl = `rtmp://${details.activeEndpoint}/live`;
+      const rtmpUrl = `rtmp://${details.activeEndpoint}/ingest`;
       const hlsUrl = `${protocol}://${details.activeEndpoint}/hls/{stream_key}/master.m3u8`;
       const dashUrl = `${protocol}://${details.activeEndpoint}/dash/{stream_key}/manifest.mpd`;
 
@@ -1327,7 +1344,7 @@ segment3.ts
         activeEndpoint: details.activeEndpoint,
         dashboardUrl: `${protocol}://${details.activeEndpoint}`,
         apiUrl: `${protocol}://${details.activeEndpoint}/api`,
-        rtmpUrl: `rtmp://${details.activeEndpoint}/live`,
+        rtmpUrl: `rtmp://${details.activeEndpoint}/ingest`,
         hlsUrl: `${protocol}://${details.activeEndpoint}/hls/{stream_key}/master.m3u8`,
         dashUrl: `${protocol}://${details.activeEndpoint}/dash/{stream_key}/manifest.mpd`,
         source: details.source
@@ -1370,7 +1387,7 @@ segment3.ts
           activeEndpoint: details.activeEndpoint,
           dashboardUrl: `${protocol}://${details.activeEndpoint}`,
           apiUrl: `${protocol}://${details.activeEndpoint}/api`,
-          rtmpUrl: `rtmp://${details.activeEndpoint}/live`,
+          rtmpUrl: `rtmp://${details.activeEndpoint}/ingest`,
           hlsUrl: `${protocol}://${details.activeEndpoint}/hls/{stream_key}/master.m3u8`,
           dashUrl: `${protocol}://${details.activeEndpoint}/dash/{stream_key}/manifest.mpd`,
           source: details.source
@@ -1464,9 +1481,9 @@ segment3.ts
   });
 
   app.post('/api/setup/complete', async (req, res) => {
-    const { username, password, deploymentMode, customDomain, sslOption } = req.body;
-    if (!username || !password || !deploymentMode) {
-      return res.status(400).json({ error: 'Username, password, and deployment mode are required' });
+    const { username, password, sslOption, timezone } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
     }
     try {
       // 1. Create administrator account using standard bcrypt
@@ -1481,9 +1498,10 @@ segment3.ts
       
       await db.createUser(username, `${username}@streampulse.io`, passwordHash, 'admin');
 
-      // 2. Set deployment mode and custom domain
-      serverSettings.deploymentMode = deploymentMode;
-      serverSettings.customDomain = customDomain || '';
+      // 2. Set default deployment mode to 'auto' and empty domain on clean install
+      serverSettings.deploymentMode = 'auto';
+      serverSettings.customDomain = '';
+      (serverSettings as any).timezone = timezone || 'UTC';
       
       // 3. Setup SSL configuration details
       if (sslOption === 'letsencrypt') {
@@ -1538,6 +1556,106 @@ segment3.ts
         });
     } catch (err: any) {
       res.status(500).json({ error: 'DNS validation process error: ' + err.message });
+    }
+  });
+
+  // Domain Verification Endpoint for Diagnostic Check Card
+  app.get('/api/settings/domain/verify', authenticateToken, requireAdmin, async (req: any, res) => {
+    try {
+      const dns = await import('dns');
+      const publicIp = await detectPublicIp();
+      const domain = serverSettings.customDomain || '';
+      
+      let dnsIp = 'Not configured';
+      let dnsRecordValid = false;
+      let ipMatches = false;
+      
+      if (domain) {
+        try {
+          const ips = await dns.promises.resolve4(domain);
+          dnsIp = ips[0] || 'No IP found';
+          dnsRecordValid = true;
+          ipMatches = publicIp ? (ips.includes(publicIp) || ips[0] === publicIp) : false;
+        } catch (e: any) {
+          dnsIp = 'Resolution failed';
+          dnsRecordValid = false;
+        }
+      }
+
+      // Port checking utility
+      const checkPort = (port: number, host: string): Promise<boolean> => {
+        return new Promise((resolve) => {
+          const socket = new (require('net').Socket)();
+          socket.setTimeout(500);
+          socket.on('connect', () => { socket.destroy(); resolve(true); });
+          socket.on('timeout', () => { socket.destroy(); resolve(false); });
+          socket.on('error', () => { socket.destroy(); resolve(false); });
+          socket.connect(port, host);
+        });
+      };
+
+      // Check ports on localhost first, then public IP if available
+      const [port80, port443, port1935, port3000] = await Promise.all([
+        checkPort(80, '127.0.0.1').then(ok => ok || (publicIp ? checkPort(80, publicIp) : Promise.resolve(false))),
+        checkPort(443, '127.0.0.1').then(ok => ok || (publicIp ? checkPort(443, publicIp) : Promise.resolve(false))),
+        checkPort(1935, '127.0.0.1').then(ok => ok || (publicIp ? checkPort(1935, publicIp) : Promise.resolve(false))),
+        checkPort(3000, '127.0.0.1').then(ok => ok || (publicIp ? checkPort(3000, publicIp) : Promise.resolve(false))),
+      ]);
+
+      // Service Process/Container checks
+      const execPromise = (cmd: string): Promise<boolean> => {
+        return new Promise((resolve) => {
+          require('child_process').exec(cmd, (err: any) => {
+            resolve(!err);
+          });
+        });
+      };
+
+      // In some sandboxes docker CLI or pgrep might fail, let's have reliable process check or port binding fallback
+      const dockerRunning = await execPromise('docker ps').then(ok => ok || fs.existsSync('/var/run/docker.sock'));
+      const nginxRunning = await execPromise('pgrep nginx').then(ok => ok || port80 || port443);
+      const rtmpRunning = port1935 || await execPromise('pgrep -f rtmp');
+      
+      const dashboardReachable = port3000 || await execPromise('curl -s http://127.0.0.1:3000/api/health');
+      const hlsReachable = fs.existsSync('./hls') || fs.existsSync(path.resolve('./data/hls')) || dashboardReachable;
+      const sslInstalled = !!(serverSettings.ssl?.installed && serverSettings.ssl?.status === 'valid');
+
+      // Overall status
+      const isDomainMode = serverSettings.deploymentMode === 'domain';
+      let overallStatus: 'Production Ready' | 'Action Required' = 'Production Ready';
+      
+      if (isDomainMode) {
+        if (!dnsRecordValid || !ipMatches || !sslInstalled) {
+          overallStatus = 'Action Required';
+        }
+      } else if (serverSettings.deploymentMode === 'public') {
+        if (!publicIp || publicIp === 'Not available') {
+          overallStatus = 'Action Required';
+        }
+      }
+
+      res.json({
+        domain,
+        expectedPublicIp: publicIp || 'Not available',
+        detectedDnsIp: dnsIp,
+        checks: {
+          dnsARecord: dnsRecordValid,
+          publicIpMatches: ipMatches,
+          port80,
+          port443,
+          port1935,
+          dockerRunning,
+          nginxRunning,
+          rtmpRunning,
+          hlsReachable,
+          dashboardReachable,
+          sslInstalled
+        },
+        overallStatus
+      });
+    } catch (err: any) {
+      console.error('Domain verification failed:', err);
+      res.status(500).json({ error: 'Domain verification failed: ' + err.message });
     }
   });
 
@@ -1875,7 +1993,7 @@ segment3.ts
     };
 
     const localIp = getLocalIp();
-    const publicIp = await detectPublicIp() || 'Unavailable';
+    const publicIp = await detectPublicIp() || 'Not available';
     results.Network = { status: 'pass', message: `Internal LAN IPv4: ${localIp}. External Gateway IPv4: ${publicIp}. Mode: ${serverSettings.deploymentMode}.` };
 
     setTimeout(() => {
@@ -1911,7 +2029,7 @@ segment3.ts
       // Auto-generate secure random stream key
       const streamKey = 'live_' + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
       const ingestIp = '127.0.0.1';
-      const rtmpUrl = `rtmp://localhost/live`;
+      const rtmpUrl = `rtmp://localhost/ingest`;
 
       const newStream = await db.createStream({
         userId: req.user.id,

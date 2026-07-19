@@ -804,14 +804,24 @@ rtmp {
         listen 1935; # Standard RTMP port
         chunk_size 4096;
 
-        # Primary Live Stream application
-        application live {
+        # Primary Live Stream Ingest Application
+        # OBS publishes to rtmp://server/ingest/<stream_key>
+        application ingest {
             live on;
             record off;
+
+            # Forward the incoming stream to the 'live' application for RTMP playback
+            push rtmp://localhost/live;
 
             # Hand over incoming RTMP stream to FFmpeg for dynamic Multi-Bitrate HLS Transcoding
             # This triggers the custom transcode script to generate 1080p, 720p, 480p, and 360p HLS playlists
             exec_push /usr/local/bin/transcode.sh \$name;
+        }
+
+        # Standalone Live application for playback/distribution (No transcoding hooks, no circular locks)
+        application live {
+            live on;
+            record off;
         }
 
         # Raw ingest application (optional, if you want direct playback without transcoding)
@@ -950,14 +960,24 @@ rtmp {
         listen 1935; # Standard RTMP port
         chunk_size 4096;
 
-        # Primary Live Stream application
-        application live {
+        # Primary Live Stream Ingest Application
+        # OBS publishes to rtmp://server/ingest/<stream_key>
+        application ingest {
             live on;
             record off;
+
+            # Forward the incoming stream to the 'live' application for RTMP playback
+            push rtmp://localhost/live;
 
             # Hand over incoming RTMP stream to FFmpeg for dynamic Multi-Bitrate HLS Transcoding
             # This triggers the custom transcode script to generate 1080p, 720p, 480p, and 360p HLS playlists
             exec_push /usr/local/bin/transcode.sh \$name;
+        }
+
+        # Standalone Live application for playback/distribution (No transcoding hooks, no circular locks)
+        application live {
+            live on;
+            record off;
         }
 
         # Raw ingest application (optional, if you want direct playback without transcoding)

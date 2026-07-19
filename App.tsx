@@ -668,11 +668,15 @@ CREATE TABLE IF NOT EXISTS streams (
       }
       const data = await safeParseJson(res);
       setNetworkDetails(data);
-      if (data.publicIp && data.publicIp !== 'Unavailable') {
+      if (data.publicIp && data.publicIp !== 'Unavailable' && data.publicIp !== 'Not available') {
         setDetectedPublicIp(data.publicIp);
+      } else {
+        setDetectedPublicIp('Not available');
       }
       if (data.lanIp) {
         setDetectedLanIp(data.lanIp);
+      } else {
+        setDetectedLanIp('Not available');
       }
     } catch (err) {
       console.error('Error fetching network details:', err);
@@ -971,11 +975,15 @@ CREATE TABLE IF NOT EXISTS streams (
       if (res.ok) {
         setNetworkSuccess(data.message || 'Network configuration applied successfully.');
         setNetworkDetails(data.resolved);
-        if (data.resolved?.publicIp && data.resolved.publicIp !== 'Unavailable') {
+        if (data.resolved?.publicIp && data.resolved.publicIp !== 'Unavailable' && data.resolved.publicIp !== 'Not available') {
           setDetectedPublicIp(data.resolved.publicIp);
+        } else {
+          setDetectedPublicIp('Not available');
         }
         if (data.resolved?.lanIp) {
           setDetectedLanIp(data.resolved.lanIp);
+        } else {
+          setDetectedLanIp('Not available');
         }
         await fetchStreams();
       } else {
@@ -1377,9 +1385,9 @@ CREATE TABLE IF NOT EXISTS streams (
                   <div className="flex flex-col gap-1 text-xs text-zinc-300 bg-zinc-900 p-2 rounded-lg border border-zinc-800">
                     <div className="flex items-center gap-2">
                       <Globe className="w-3.5 h-3.5 text-blue-500" />
-                      <span className="font-mono text-[11px] truncate">{detectedPublicIp}</span>
+                      <span className="font-mono text-[11px] truncate">{detectedPublicIp || 'Not available'}</span>
                     </div>
-                    <span className="text-[9px] text-zinc-500 uppercase tracking-tighter font-bold">Public Node</span>
+                    <span className="text-[9px] text-zinc-500 uppercase tracking-tighter font-bold">Public IP</span>
                   </div>
                   <div className="flex flex-col gap-1 text-xs text-zinc-300 bg-zinc-900 p-2 rounded-lg border border-zinc-800">
                     <div className="flex items-center gap-2">
@@ -2122,17 +2130,17 @@ CREATE TABLE IF NOT EXISTS streams (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Active Endpoint</span>
-                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.activeEndpoint || 'Endpoint unavailable'}</span>
-                    <span className="text-[9px] text-zinc-500 block">Source: {networkDetails?.source || 'Endpoint unavailable'}</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.activeEndpoint || 'Not available'}</span>
+                    <span className="text-[9px] text-zinc-500 block">Source: {networkDetails?.source || 'Not available'}</span>
                   </div>
                   <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Current LAN IP</span>
-                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.lanIp || 'Endpoint unavailable'}</span>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Local LAN IP</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.lanIp || 'Not available'}</span>
                     <span className="text-[9px] text-zinc-500 block">VirtualBox, VMware, Local Server</span>
                   </div>
                   <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-1">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Current Public IP</span>
-                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.publicIp || 'Endpoint unavailable'}</span>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Public IP</span>
+                    <span className="text-sm font-semibold text-zinc-200 font-mono block truncate">{networkDetails?.publicIp || 'Not available'}</span>
                     <span className="text-[9px] text-zinc-500 block">Cloud VPS Server</span>
                   </div>
                 </div>

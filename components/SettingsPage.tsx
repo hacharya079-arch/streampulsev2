@@ -156,6 +156,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [diagnosticResults, setDiagnosticResults] = useState<Record<string, { status: 'pass' | 'warning' | 'fail'; message: string }> | null>(null);
   const [runningDiagnostics, setRunningDiagnostics] = useState(false);
 
+  // Domain Verification States
+  const [verificationResult, setVerificationResult] = useState<any>(null);
+  const [verifyingDomain, setVerifyingDomain] = useState(false);
+
+  const handleRunDomainVerification = async () => {
+    setVerifyingDomain(true);
+    try {
+      const res = await fetchWithAuth('/api/settings/domain/verify');
+      if (res.ok) {
+        const data = await res.json();
+        setVerificationResult(data);
+      } else {
+        console.error('Failed to run domain verification');
+      }
+    } catch (e) {
+      console.error('Domain verification error:', e);
+    } finally {
+      setVerifyingDomain(false);
+    }
+  };
+
   // 4. Update check status
   const [updateDetails, setUpdateDetails] = useState<any>(null);
 
@@ -165,6 +186,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     fetchStreamingParams();
     checkSoftwareUpdates();
   }, [token]);
+
+  useEffect(() => {
+    if (activeTab === 'network' && token) {
+      handleRunDomainVerification();
+    }
+  }, [activeTab, token]);
 
   const fetchWithAuth = async (url: string, init?: RequestInit) => {
     return fetch(url, {
@@ -619,13 +646,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">LAN Node IP</label>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Local LAN IP</label>
                     <div className="bg-zinc-950 border border-zinc-850 rounded-lg px-3 py-2 text-xs font-mono text-zinc-300">
                       {detectedLanIp || 'Detecting...'}
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">WAN Public IP</label>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Public IP</label>
                     <div className="bg-zinc-950 border border-zinc-850 rounded-lg px-3 py-2 text-xs font-mono text-zinc-300">
                       {detectedPublicIp || 'Detecting...'}
                     </div>
@@ -685,10 +712,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <div className="space-y-1">
                       <div className="text-[9px] font-bold text-zinc-500 uppercase">RTMP Ingest Address</div>
                       <div className="bg-zinc-900 border border-zinc-855 rounded-lg px-2.5 py-1.5 text-xs font-mono text-blue-400 truncate flex justify-between items-center">
-                        <span>{networkDetails?.rtmpUrl || `rtmp://${detectedLanIp || 'localhost'}:1935/live`}</span>
+                        <span>{networkDetails?.rtmpUrl || `rtmp://${detectedLanIp || 'localhost'}:1935/ingest`}</span>
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(networkDetails?.rtmpUrl || `rtmp://${detectedLanIp || 'localhost'}:1935/live`);
+                            navigator.clipboard.writeText(networkDetails?.rtmpUrl || `rtmp://${detectedLanIp || 'localhost'}:1935/ingest`);
                             setCopiedUrlKey('rtmp');
                             setTimeout(() => setCopiedUrlKey(null), 1500);
                           }}
@@ -726,6 +753,86 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     Test Playback M3U8
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Domain Verification Diagnostic Card */}
+            <div className="border-t border-zinc-800 pt-6 mt-6">
+              <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-emerald-500" /> Domain & Production Verification Diagnostics
+                    </h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">Real-time dynamic system health and routing verification suite.</p>
+                  </div>
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <button
+                      onClick={handleRunDomainVerification}
+                      disabled={verifyingDomain}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white rounded-lg text-xs font-semibold transition disabled:opacity-50"
+                    >
+                      <RefreshCcw className={`w-3.5 h-3.5 ${verifyingDomain ? 'animate-spin' : ''}`} />
+                      {verifyingDomain ? 'Verifying...' : 'Re-Run Verification'}
+                    </button>
+                    {verificationResult && (
+                      <span className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border shadow-sm ${verificationResult.overallStatus === 'Production Ready' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-emerald-950/20' : 'bg-red-500/10 border-red-500/30 text-red-400 shadow-red-950/20'}`}>
+                        {verificationResult.overallStatus}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {verificationResult ? (
+                  <div className="space-y-4 animate-fadeIn">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-zinc-900 border border-zinc-850 p-3.5 rounded-xl text-xs font-mono">
+                      <div className="flex justify-between items-center py-0.5">
+                        <span className="text-zinc-500">Expected Public IP (VPS)</span>
+                        <span className="text-zinc-300 font-bold">{verificationResult.expectedPublicIp}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-0.5">
+                        <span className="text-zinc-500">Detected DNS Resolution IP</span>
+                        <span className="text-zinc-300 font-bold">{verificationResult.detectedDnsIp}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {[
+                        { label: 'DNS A Record Resolution', status: verificationResult.checks.dnsARecord },
+                        { label: 'Public IP Matches VPS', status: verificationResult.checks.publicIpMatches },
+                        { label: 'Port 80 (HTTP Listener)', status: verificationResult.checks.port80 },
+                        { label: 'Port 443 (HTTPS Listener)', status: verificationResult.checks.port443 },
+                        { label: 'Port 1935 (RTMP Ingest)', status: verificationResult.checks.port1935 },
+                        { label: 'Docker Container Daemon', status: verificationResult.checks.dockerRunning },
+                        { label: 'Nginx Reverse Proxy Process', status: verificationResult.checks.nginxRunning },
+                        { label: 'RTMP Streaming Server', status: verificationResult.checks.rtmpRunning },
+                        { label: 'HLS Directory Reachable', status: verificationResult.checks.hlsReachable },
+                        { label: 'Management Dashboard Port', status: verificationResult.checks.dashboardReachable },
+                        { label: 'SSL Certificate Installed', status: verificationResult.checks.sslInstalled },
+                      ].map((check, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 bg-zinc-900/50 border border-zinc-900 rounded-xl">
+                          <span className="text-xs text-zinc-400">{check.label}</span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            {check.status ? (
+                              <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Active
+                              </span>
+                            ) : (
+                              <span className="text-xs font-bold text-zinc-500 flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5 text-zinc-600" /> Inactive
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-6 text-zinc-500 space-y-2">
+                    <RefreshCcw className="w-6 h-6 animate-spin text-blue-500" />
+                    <span className="text-xs">Initializing dynamic diagnostic check card...</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -435,7 +435,7 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams, ne
     if (selectedStreamId) {
       const found = streams.find(s => s.id === selectedStreamId);
       if (found) {
-        streamUrl = found.rtmpUrl; // Ingest RTMP playback url
+        streamUrl = found.rtmpUrl ? found.rtmpUrl.replace('/ingest', '/live') : ''; // Direct live RTMP playback url
         streamId = found.id;
       }
     } else if (customStreamUrl) {
@@ -600,7 +600,7 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams, ne
       if (selectedStreamId) {
         const found = streams.find(s => s.id === selectedStreamId);
         if (found) {
-          streamUrl = found.rtmpUrl;
+          streamUrl = found.rtmpUrl ? found.rtmpUrl.replace('/ingest', '/live') : '';
           streamId = found.id;
         }
       } else if (customStreamUrl) {
@@ -642,7 +642,7 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams, ne
       if (schedStreamId) {
         const found = streams.find(s => s.id === schedStreamId);
         if (found) {
-          streamUrl = found.rtmpUrl;
+          streamUrl = found.rtmpUrl ? found.rtmpUrl.replace('/ingest', '/live') : '';
           streamId = found.id;
         }
       } else if (schedCustomUrl) {
