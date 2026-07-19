@@ -603,8 +603,9 @@ export const db = {
   },
 
   getUserById: async (id: number): Promise<UserRecord | null> => {
+    const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
     if (usePostgres && pgPool) {
-      const res = await pgPool.query('SELECT * FROM users WHERE id = $1', [id]);
+      const res = await pgPool.query('SELECT * FROM users WHERE id = $1', [numericId]);
       if (res.rows.length === 0) return null;
       const r = res.rows[0];
       return {
@@ -620,7 +621,7 @@ export const db = {
         display_name: r.display_name || null
       };
     }
-    return localState.users.find(u => u.id === id) || null;
+    return localState.users.find(u => u.id === numericId) || null;
   },
 
   getUsers: async (): Promise<UserRecord[]> => {
@@ -680,6 +681,7 @@ export const db = {
   },
 
   updateUser: async (id: number, updates: Partial<UserRecord>): Promise<UserRecord | null> => {
+    const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
     if (usePostgres && pgPool) {
       const keys = Object.keys(updates);
       if (keys.length === 0) return null;
@@ -693,8 +695,8 @@ export const db = {
       }).join(', ');
 
       const vals = keys.map(k => (updates as any)[k]);
-      await pgPool.query(`UPDATE users SET ${setClause} WHERE id = $1`, [id, ...vals]);
-      const res = await pgPool.query('SELECT * FROM users WHERE id = $1', [id]);
+      await pgPool.query(`UPDATE users SET ${setClause} WHERE id = $1`, [numericId, ...vals]);
+      const res = await pgPool.query('SELECT * FROM users WHERE id = $1', [numericId]);
       if (res.rows.length === 0) return null;
       const r = res.rows[0];
       return {
@@ -711,7 +713,7 @@ export const db = {
       };
     }
 
-    const index = localState.users.findIndex(u => u.id === id);
+    const index = localState.users.findIndex(u => u.id === numericId);
     if (index === -1) return null;
     localState.users[index] = { ...localState.users[index], ...updates };
     saveLocalState();
@@ -719,18 +721,19 @@ export const db = {
   },
 
   deleteUser: async (id: number): Promise<boolean> => {
+    const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
     if (usePostgres && pgPool) {
       // Safely remove user-channel assignments in streams before deletion
-      await pgPool.query('UPDATE streams SET user_id = NULL WHERE user_id = $1', [id]);
-      const res = await pgPool.query('DELETE FROM users WHERE id = $1', [id]);
+      await pgPool.query('UPDATE streams SET user_id = NULL WHERE user_id = $1', [numericId]);
+      const res = await pgPool.query('DELETE FROM users WHERE id = $1', [numericId]);
       return (res.rowCount ?? 0) > 0;
     }
     // Set userId = 0 on associated localState streams to preserve them safely
     if (localState.streams) {
-      localState.streams = localState.streams.map(s => s.userId === id ? { ...s, userId: 0 } : s);
+      localState.streams = localState.streams.map(s => s.userId === numericId ? { ...s, userId: 0 } : s);
     }
     const lenBefore = localState.users.length;
-    localState.users = localState.users.filter(u => u.id !== id);
+    localState.users = localState.users.filter(u => u.id !== numericId);
     if (localState.users.length !== lenBefore) {
       saveLocalState();
       return true;

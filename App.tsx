@@ -55,13 +55,24 @@ import DeploymentGuide from './components/DeploymentGuide';
 import { StreamTestHub } from './components/StreamTestHub';
 import { DeviceManager } from './components/DeviceManager';
 import { SettingsPage } from './components/SettingsPage';
+import { SetupWizard } from './components/SetupWizard';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
 
+const safeParseJson = async (res: Response) => {
+  const contentType = res.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    const text = await res.text();
+    throw new Error(`Expected JSON response, but received content-type: ${contentType || 'unknown'}. Status: ${res.status}. Preview: ${text.substring(0, 150)}`);
+  }
+  return res.json();
+};
+
 const App: React.FC = () => {
   const [token, setToken] = useState<string | null>(localStorage.getItem('streampulse_jwt'));
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
   
   const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users'>('dashboard');
   const [streams, setStreams] = useState<StreamSession[]>([]);
@@ -313,6 +324,23 @@ CREATE TABLE IF NOT EXISTS streams (
   };
 
   useEffect(() => {
+    const checkSetupStatus = async () => {
+      try {
+        const res = await fetch('/api/setup/status');
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const data = await safeParseJson(res);
+        setSetupCompleted(!!data.completed);
+      } catch (err) {
+        console.error('Failed to verify StreamPulse setup status:', err);
+        setSetupCompleted(true); // Graceful fallback
+      }
+    };
+    checkSetupStatus();
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem('streampulse_manual_ip', manualIp);
   }, [manualIp]);
 
@@ -390,11 +418,11 @@ CREATE TABLE IF NOT EXISTS streams (
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('streampulse_jwt');
     setToken(null);
     setCurrentUser(null);
-  };
+  }, []);
 
   // Load Current User Profile
   useEffect(() => {
@@ -406,16 +434,17 @@ CREATE TABLE IF NOT EXISTS streams (
           handleLogout();
           return;
         }
-        const data = await res.json();
-        if (res.ok) {
-          setCurrentUser(data);
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
         }
+        const data = await safeParseJson(res);
+        setCurrentUser(data);
       } catch (err) {
         console.error('Failed to load profile:', err);
       }
     };
     fetchProfile();
-  }, [token]);
+  }, [token, fetchWithNetworkHeaders]);
 
   // Load IP and Server Stats / Streams / Recordings
   useEffect(() => {
@@ -455,12 +484,19 @@ CREATE TABLE IF NOT EXISTS streams (
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/streams');
-      const data = await res.json();
-      if (res.ok) setStreams(data);
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      const data = await safeParseJson(res);
+      setStreams(data);
     } catch (err) {
       console.error('Error fetching streams:', err);
     }
-  }, [token]);
+  }, [token, fetchWithNetworkHeaders, handleLogout]);
 
   const fetchUsers = useCallback(async () => {
     if (!token || !currentUser || currentUser.role !== 'admin') return;
@@ -587,42 +623,61 @@ CREATE TABLE IF NOT EXISTS streams (
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/system/stats');
-      const data = await res.json();
-      if (res.ok) setStats(data);
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      const data = await safeParseJson(res);
+      setStats(data);
     } catch (err) {
       console.error('Error fetching server stats:', err);
     }
-  }, [token]);
+  }, [token, fetchWithNetworkHeaders, handleLogout]);
 
   const fetchActionLogs = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/system/logs');
-      const data = await res.json();
-      if (res.ok) setActionLogs(data);
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      const data = await safeParseJson(res);
+      setActionLogs(data);
     } catch (err) {
       console.error('Error fetching logs:', err);
     }
-  }, [token]);
+  }, [token, fetchWithNetworkHeaders, handleLogout]);
 
   const fetchNetworkDetails = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/network/details');
-      const data = await res.json();
-      if (res.ok) {
-        setNetworkDetails(data);
-        if (data.publicIp && data.publicIp !== 'Unavailable') {
-          setDetectedPublicIp(data.publicIp);
-        }
-        if (data.lanIp) {
-          setDetectedLanIp(data.lanIp);
-        }
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      const data = await safeParseJson(res);
+      setNetworkDetails(data);
+      if (data.publicIp && data.publicIp !== 'Unavailable') {
+        setDetectedPublicIp(data.publicIp);
+      }
+      if (data.lanIp) {
+        setDetectedLanIp(data.lanIp);
       }
     } catch (err) {
       console.error('Error fetching network details:', err);
     }
-  }, [token, fetchWithNetworkHeaders]);
+  }, [token, fetchWithNetworkHeaders, handleLogout]);
 
   useEffect(() => {
     if (!token) return;
@@ -1217,6 +1272,11 @@ CREATE TABLE IF NOT EXISTS streams (
       </>
     );
   };
+
+  // Setup Wizard for new installation
+  if (setupCompleted === false) {
+    return <SetupWizard onSetupComplete={() => setSetupCompleted(true)} />;
+  }
 
   // Unauthenticated login overlay
   if (!token) {
