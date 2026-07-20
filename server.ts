@@ -1070,7 +1070,7 @@ segment3.ts
     for (const service of services) {
       try {
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 1200);
+        const id = setTimeout(() => controller.abort(), 4000);
         const res = await fetch(service, { signal: controller.signal });
         clearTimeout(id);
         if (res.ok) {
@@ -1086,7 +1086,7 @@ segment3.ts
           }
         }
       } catch (e: any) {
-        console.warn(`[Network Detection] Service ${service} failed:`, e.message);
+        console.debug(`[Network Detection] Service ${service} bypassed or timeout`);
       }
     }
     return null;
