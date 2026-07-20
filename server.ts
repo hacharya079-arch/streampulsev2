@@ -1203,29 +1203,33 @@ segment3.ts
     let activeEndpoint = '';
     let source = '';
 
-    // Determine Active Endpoint based on Deployment Mode
-    if (mode === 'lan') {
-      activeEndpoint = lanIp;
-      source = 'Local LAN Mode';
-    } else if (mode === 'public') {
-      activeEndpoint = publicIp || 'Not available';
-      source = 'Public VPS Mode';
-    } else if (mode === 'domain') {
+    const cleanManualIp = (manualIp || '').trim();
+    const isValidManualIp = cleanManualIp !== '' && cleanManualIp !== '0.0.0.0' && cleanManualIp !== '127.0.0.1';
+
+    // 1. Manual IP saved in Settings / Header
+    if (isValidManualIp) {
+      activeEndpoint = cleanManualIp;
+      source = 'Manual IP Settings';
+    }
+    // 2. Custom Domain (if in domain mode or domain is explicitly set)
+    else if (mode === 'domain' && (customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN)) {
       activeEndpoint = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || 'localhost';
       source = 'Domain Mode';
-    } else {
-      // 'auto' mode: Domain -> WAN -> LAN IP
-      const domain = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '';
-      if (domain) {
-        activeEndpoint = domain;
-        source = 'Auto Detect: Domain';
-      } else if (publicIp) {
-        activeEndpoint = publicIp;
-        source = 'Auto Detect: Public IP';
-      } else {
-        activeEndpoint = lanIp;
-        source = 'Auto Detect: LAN IP';
-      }
+    }
+    // 3. Detected LAN IP (if not loopback)
+    else if (lanIp && lanIp !== '127.0.0.1') {
+      activeEndpoint = lanIp;
+      source = 'Local LAN IP';
+    }
+    // 4. Public IP (if enabled/available)
+    else if (publicIp && publicIp !== '127.0.0.1' && publicIp !== 'Not available') {
+      activeEndpoint = publicIp;
+      source = 'Public VPS IP';
+    }
+    // 5. 127.0.0.1 (last fallback only)
+    else {
+      activeEndpoint = '127.0.0.1';
+      source = 'Localhost Fallback';
     }
 
     return {
@@ -1248,7 +1252,7 @@ segment3.ts
 
     // Override rtmpUrl and ingestIp dynamically at runtime
     const dynamicRtmpUrl = `rtmp://${activeEndpoint}/ingest`;
-    const dynamicIngestIp = details.publicIp ? details.publicIp : details.lanIp;
+    const dynamicIngestIp = isIp ? activeEndpoint : (details.publicIp ? details.publicIp : details.lanIp);
 
     return {
       ...s,
