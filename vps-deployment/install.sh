@@ -787,7 +787,7 @@ generate_nginx_conf() {
 # StreamPulse Nginx Reverse Proxy and HTTP Server Config
 
 user $nginx_user;
-worker_processes auto;
+worker_processes 1;
 error_log /var/log/nginx/error.log warn;
 pid $nginx_pid;
 
@@ -943,7 +943,7 @@ EOF
 # StreamPulse Nginx Reverse Proxy and HTTP Server Config
 
 user $nginx_user;
-worker_processes auto;
+worker_processes 1;
 error_log /var/log/nginx/error.log warn;
 pid $nginx_pid;
 

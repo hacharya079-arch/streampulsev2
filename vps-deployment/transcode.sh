@@ -50,7 +50,7 @@ sleep 1
 # Detect if the incoming stream contains an audio track
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Analyzing stream properties..." >> "$LOG_FILE"
 HAS_AUDIO=0
-if ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$RTMP_INPUT" | grep -q "[a-zA-Z0-9]"; then
+if ffprobe -v error -rw_timeout 5000000 -select_streams a -show_entries stream=codec_name -of csv=p=0 "$RTMP_INPUT" | grep -q "[a-zA-Z0-9]"; then
     HAS_AUDIO=1
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Audio track detected in input stream." >> "$LOG_FILE"
 else
@@ -60,6 +60,7 @@ fi
 # Build FFmpeg command arguments
 FFMPEG_ARGS=(
     -y
+    -rw_timeout 5000000
     -i "$RTMP_INPUT"
     # Video splitting and downscaling filters
     -filter_complex "[v:0]split=4[v1080_in][v720_in][v480_in][v360_in]; \
