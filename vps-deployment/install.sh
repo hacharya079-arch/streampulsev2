@@ -1049,6 +1049,18 @@ http {
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
+           
+        # RTMP Statistics XML
+        location /stat {
+            rtmp_stat all;
+            rtmp_stat_stylesheet stat.xsl;
+            add_header Access-Control-Allow-Origin * always;
+        }
+
+        # RTMP Statistics Stylesheet
+        location /stat.xsl {
+            alias /usr/share/doc/libnginx-mod-rtmp/examples/stat.xsl;
+        }
 
         # RTMP Statistics XML
         location /stat {
