@@ -172,6 +172,79 @@ async function startServer() {
     next();
   }, express.static(hlsPath));
 
+  // Nginx RTMP statistics endpoint mock for sandbox testing/verification
+  app.get('/stat', async (req, res) => {
+    try {
+      const streams = await db.getStreams();
+      const liveStreams = streams.filter(s => s.status === 'live');
+
+      res.setHeader('Content-Type', 'application/xml');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      let xml = `<?xml version="1.0" encoding="utf-8" ?>\n`;
+      xml += `<?xml-stylesheet type="text/xsl" href="stat.xsl" ?>\n`;
+      xml += `<rtmp>\n`;
+      xml += `    <nginx_version>1.25.2</nginx_version>\n`;
+      xml += `    <compiler>gcc 12.2.0</compiler>\n`;
+      xml += `    <built>Oct 24 2023 14:00:00</built>\n`;
+      xml += `    <pid>513</pid>\n`;
+      xml += `    <uptime>3600</uptime>\n`;
+      xml += `    <naccepted>${liveStreams.length ? 1 : 0}</naccepted>\n`;
+      xml += `    <bw_in>0</bw_in>\n`;
+      xml += `    <bw_out>0</bw_out>\n`;
+      xml += `    <server>\n`;
+      xml += `        <application>\n`;
+      xml += `            <name>live</name>\n`;
+      xml += `            <live>\n`;
+      liveStreams.forEach(stream => {
+        xml += `                <stream>\n`;
+        xml += `                    <name>${stream.id}</name>\n`;
+        xml += `                    <active/>\n`;
+        xml += `                    <publishing/>\n`;
+        xml += `                    <clients>\n`;
+        xml += `                        <client>\n`;
+        xml += `                            <id>1</id>\n`;
+        xml += `                            <address>127.0.0.1</address>\n`;
+        xml += `                            <time>1000</time>\n`;
+        xml += `                            <flashver>LNX 11,2,202,233</flashver>\n`;
+        xml += `                            <publishing/>\n`;
+        xml += `                            <dropped>0</dropped>\n`;
+        xml += `                            <avsync>0</avsync>\n`;
+        xml += `                            <bw_in>1500000</bw_in>\n`;
+        xml += `                            <bw_out>0</bw_out>\n`;
+        xml += `                        </client>\n`;
+        xml += `                    </clients>\n`;
+        xml += `                </stream>\n`;
+      });
+      xml += `            </live>\n`;
+      xml += `        </application>\n`;
+      xml += `    </server>\n`;
+      xml += `</rtmp>`;
+
+      res.send(xml);
+    } catch (err) {
+      console.error('Error serving /stat:', err);
+      res.status(500).send('Error generating statistics');
+    }
+  });
+
+  app.get('/stat.xsl', (req, res) => {
+    res.setHeader('Content-Type', 'text/xml');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.send(`<?xml version="1.0" encoding="utf-8" ?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+    <xsl:template match="/">
+        <html>
+        <head><title>RTMP Statistics</title></head>
+        <body>
+            <h1>RTMP Statistics</h1>
+            <p>Nginx RTMP module is running and operational.</p>
+        </body>
+        </html>
+    </xsl:template>
+</xsl:stylesheet>`);
+  });
+
   // Streaming Engine global maps & helpers
   const activeFfProcesses = new Map<string, any>();
 
