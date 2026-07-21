@@ -907,10 +907,11 @@ http {
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
-        # RTMP Statistics XML Page
+        # RTMP Statistics XML
         location /stat {
             rtmp_stat all;
             rtmp_stat_stylesheet stat.xsl;
+
             add_header Access-Control-Allow-Origin * always;
         }
 
@@ -1049,10 +1050,11 @@ http {
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
-        # RTMP Statistics XML Page
+        # RTMP Statistics XML
         location /stat {
             rtmp_stat all;
             rtmp_stat_stylesheet stat.xsl;
+
             add_header Access-Control-Allow-Origin * always;
         }
 
