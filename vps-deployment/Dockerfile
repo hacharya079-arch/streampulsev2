@@ -52,21 +52,14 @@ COPY vps-deployment/nginx-rtmp.conf /etc/nginx/nginx-rtmp.conf
 COPY vps-deployment/transcode.sh /usr/local/bin/transcode.sh
 RUN chmod +x /usr/local/bin/transcode.sh
 
-# Expose RTMP, HTTP, and Node backend ports
+# Copy startup entrypoint script
+COPY vps-deployment/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Expose RTMP, HTTP, HTTPS, and Node backend ports
 EXPOSE 1935
 EXPOSE 80
 EXPOSE 443
 EXPOSE 3000
-
-# Copy start runner script
-COPY <<-"EOF" /app/entrypoint.sh
-#!/bin/bash
-# Start Nginx in background
-nginx -c /etc/nginx/nginx.conf &
-# Start StreamPulse Node server in foreground
-npm run start
-EOF
-
-RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]

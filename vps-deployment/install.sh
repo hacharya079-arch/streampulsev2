@@ -748,9 +748,11 @@ log_info "Synchronizing service configurations into docker-compose.yml..."
 sed -i "s/DB_HOST=.*$/DB_HOST=${DB_HOST_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 sed -i "s/DB_PORT=.*$/DB_PORT=${DB_PORT_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 sed -i "s/DB_USER=.*$/DB_USER=${DB_USER_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
+sed -i "s/POSTGRES_USER=.*$/POSTGRES_USER=${DB_USER_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 sed -i "s/DB_PASSWORD=.*$/DB_PASSWORD=${DB_PASS_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 sed -i "s/POSTGRES_PASSWORD=.*$/POSTGRES_PASSWORD=${DB_PASS_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 sed -i "s/DB_NAME=.*$/DB_NAME=${DB_NAME_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
+sed -i "s/POSTGRES_DB=.*$/POSTGRES_DB=${DB_NAME_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 sed -i "s/JWT_SECRET=.*$/JWT_SECRET=${JWT_SECRET_FROM_ENV}/g" "$SCRIPT_DIR/docker-compose.yml"
 
 # --- 5. SSL & Domain Configuration ---
