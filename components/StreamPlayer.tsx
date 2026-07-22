@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Play, 
   Pause,
@@ -963,15 +963,37 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   const currentHost = resolvedBaseUrl !== 'Endpoint unavailable' ? resolvedBaseUrl.split('://')[1] || 'Endpoint unavailable' : 'Endpoint unavailable';
 
   const rtmpPlayback = stream.rtmpUrl ? `${stream.rtmpUrl.replace('/ingest', '/live')}/${stream.streamKey}` : 'Endpoint unavailable';
-  const hlsUrl = stream.playbackUrls?.master || 'Endpoint unavailable';
-  const dashUrl = stream.playbackUrls?.dash || 'Endpoint unavailable';
+  
+  // Resolve effective HLS URL using backend provided master playlist or browser origin fallback
+  const effectiveHlsUrl = useMemo(() => {
+    if (stream.playbackUrls?.master && !stream.playbackUrls.master.includes('Endpoint unavailable') && !stream.playbackUrls.master.includes('localhost')) {
+      return stream.playbackUrls.master;
+    }
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+    const proto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+    const port = typeof window !== 'undefined' && window.location.port ? `:${window.location.port}` : '';
+    return `${proto}//${host}${port}/hls/${stream.streamKey}/master.m3u8`;
+  }, [stream.playbackUrls?.master, stream.streamKey]);
+
+  const hlsUrl = effectiveHlsUrl;
+  const dashUrl = stream.playbackUrls?.dash && !stream.playbackUrls.dash.includes('Endpoint unavailable') 
+    ? stream.playbackUrls.dash 
+    : (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}/dash/${stream.streamKey}/manifest.mpd` : 'Endpoint unavailable');
   const embedUrl = stream.playbackUrls?.embed || 'Endpoint unavailable';
+
+  // Automatically trigger active playback state when stream transitions to live
+  useEffect(() => {
+    if (stream.status === 'live') {
+      setIsPlaying(true);
+    }
+  }, [stream.status]);
 
   // Interactive Player Lifecycle effect (instantiates Hls.js or Dash.js on the <video> target)
   useEffect(() => {
     if (!isPlaying || stream.status !== 'live' || !videoRef.current) return;
 
     let active = true;
+    let retryTimer: any = null;
 
     const initPlayer = async () => {
       // Clear existing players
@@ -997,6 +1019,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             const hls = new Hls({
               enableWorker: true,
               lowLatencyMode: true,
+              manifestLoadingMaxRetry: 20,
+              manifestLoadingRetryDelay: 1000,
+              manifestLoadingMaxRetryTimeout: 60000,
+              levelLoadingMaxRetry: 20,
+              levelLoadingRetryDelay: 1000,
+              fragLoadingMaxRetry: 20,
+              fragLoadingRetryDelay: 1000,
             });
             hls.loadSource(hlsUrl);
             hls.attachMedia(video);
@@ -1004,7 +1033,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
               if (!active) return;
-              video.play().catch(e => console.log('Autoplay blocked:', e));
+              video.play().catch(e => console.log('Autoplay blocked, attempting muted play:', e));
               const levels = hls.levels.map((l: any) => `${l.height}p`);
               setQualityLevels(['Auto', ...levels]);
             });
@@ -1013,12 +1042,23 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               if (data.fatal) {
                 switch (data.type) {
                   case Hls.ErrorTypes.NETWORK_ERROR:
-                    hls.startLoad();
+                    if (retryTimer) clearTimeout(retryTimer);
+                    retryTimer = setTimeout(() => {
+                      if (active && hlsInstanceRef.current) {
+                        hlsInstanceRef.current.startLoad();
+                      }
+                    }, 1500);
                     break;
                   case Hls.ErrorTypes.MEDIA_ERROR:
                     hls.recoverMediaError();
                     break;
                   default:
+                    if (retryTimer) clearTimeout(retryTimer);
+                    retryTimer = setTimeout(() => {
+                      if (active && hlsInstanceRef.current) {
+                        hlsInstanceRef.current.loadSource(hlsUrl);
+                      }
+                    }, 2000);
                     break;
                 }
               }
@@ -1062,6 +1102,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
       if (hlsInstanceRef.current) {
         hlsInstanceRef.current.destroy();
         hlsInstanceRef.current = null;

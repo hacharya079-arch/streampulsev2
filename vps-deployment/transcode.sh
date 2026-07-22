@@ -8,7 +8,7 @@ set -euo pipefail
 
 STREAM_KEY=$1
 HLS_PATH="/var/www/hls/${STREAM_KEY}"
-RTMP_INPUT="rtmp://localhost/ingest/${STREAM_KEY}"
+RTMP_INPUT="rtmp://127.0.0.1:1935/ingest/${STREAM_KEY}"
 LOG_FILE="/var/log/nginx/transcode_${STREAM_KEY}.log"
 
 # Exit if no stream key is supplied
@@ -22,9 +22,9 @@ touch "$LOG_FILE" 2>/dev/null || true
 echo "==========================================================" >> "$LOG_FILE"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] StreamPulse Transcoder Initiated for key: ${STREAM_KEY}" >> "$LOG_FILE"
 
-# Ensure output path exists
-mkdir -p "${HLS_PATH}"
-chmod -R 755 "${HLS_PATH}"
+# Ensure output path and resolution variant subdirectories exist with full permissions
+mkdir -p "${HLS_PATH}/1080p" "${HLS_PATH}/720p" "${HLS_PATH}/480p" "${HLS_PATH}/360p"
+chmod -R 777 "${HLS_PATH}" 2>/dev/null || true
 
 # Keep track of spawned child process PID for trapping
 FFMPEG_PID=""
@@ -47,10 +47,12 @@ trap 'cleanup' SIGTERM SIGINT SIGHUP SIGQUIT EXIT
 # Wait a short moment for the ingest stream to fully establish
 sleep 1
 
-# Detect if the incoming stream contains an audio track
+# Detect if the incoming stream contains an audio track safely without crashing under pipefail
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Analyzing stream properties..." >> "$LOG_FILE"
 HAS_AUDIO=0
-if ffprobe -v error -rw_timeout 5000000 -select_streams a -show_entries stream=codec_name -of csv=p=0 "$RTMP_INPUT" | grep -q "[a-zA-Z0-9]"; then
+AUDIO_COUNT=$(ffprobe -v error -rw_timeout 3000000 -select_streams a -show_entries stream=codec_name -of csv=p=0 "$RTMP_INPUT" 2>/dev/null | grep -c "[a-zA-Z0-9]" || true)
+
+if [ "$AUDIO_COUNT" -gt 0 ]; then
     HAS_AUDIO=1
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Audio track detected in input stream." >> "$LOG_FILE"
 else
@@ -66,7 +68,7 @@ FFMPEG_ARGS=(
     -filter_complex "[v:0]split=4[v1080_in][v720_in][v480_in][v360_in]; \
                      [v1080_in]scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v1080]; \
                      [v720_in]scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[v720]; \
-                     [v480_in]scale=w=852:h=480:force_original_aspect_ratio=decrease,pad=852:480:(ow-iw)/2:(oh-ih)/2[v480]; \
+                     [v480_in]scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2[v480]; \
                      [v360_in]scale=w=640:h=360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[v360]"
     
     # 1080p Track
@@ -82,10 +84,10 @@ FFMPEG_ARGS=(
 if [ "$HAS_AUDIO" -eq 1 ]; then
     FFMPEG_ARGS+=(
         # Map audio channel 0 to all 4 video streams
-        -map 0:a -c:a:0 aac -b:a:0 192k -ac 2
-        -map 0:a -c:a:1 aac -b:a:1 128k -ac 2
-        -map 0:a -c:a:2 aac -b:a:2 96k  -ac 2
-        -map 0:a -c:a:3 aac -b:a:3 64k  -ac 2
+        -map 0:a? -c:a:0 aac -b:a:0 192k -ac 2
+        -map 0:a? -c:a:1 aac -b:a:1 128k -ac 2
+        -map 0:a? -c:a:2 aac -b:a:2 96k  -ac 2
+        -map 0:a? -c:a:3 aac -b:a:3 64k  -ac 2
         
         # Muxer HLS parameters
         -f hls

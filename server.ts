@@ -1246,7 +1246,18 @@ segment3.ts
         activeEndpoint = (lanIp && lanIp !== '127.0.0.1') ? lanIp : '127.0.0.1';
         source = 'LAN IP (Explicitly Enabled)';
       }
-      // Fallback: If auto-detection fails and no domain or saved public IP exists
+      // Fallback: If auto-detection fails and no domain or saved public IP exists, use request host header if available
+      else if (req && req.headers) {
+        const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '').toString();
+        const cleanHost = hostHeader.split(':')[0].trim();
+        if (cleanHost && cleanHost !== '0.0.0.0' && cleanHost !== 'localhost') {
+          activeEndpoint = cleanHost;
+          source = 'HTTP Request Host Header';
+        } else {
+          activeEndpoint = 'Endpoint unavailable';
+          source = 'No Public Endpoint Resolved';
+        }
+      }
       else {
         activeEndpoint = 'Endpoint unavailable';
         source = 'No Public Endpoint Resolved';
