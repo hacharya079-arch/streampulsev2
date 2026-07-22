@@ -43,6 +43,7 @@ interface ServerSettings {
   deploymentMode: 'auto' | 'lan' | 'public' | 'domain';
   customDomain: string;
   manualIp: string;
+  lastDetectedPublicIp?: string;
   setupCompleted?: boolean;
   ssl?: {
     installed: boolean;
@@ -1066,6 +1067,26 @@ segment3.ts
   // ----------------------------------------------------
   // DYNAMIC ENDPOINT & PLAYBACK URL RESOLUTION SERVICES
   // ----------------------------------------------------
+  function isPrivateOrLoopbackIp(ip: string | null | undefined): boolean {
+    if (!ip || typeof ip !== 'string') return true;
+    const clean = ip.trim().toLowerCase();
+    if (clean === '' || clean === 'localhost' || clean === '0.0.0.0' || clean === 'endpoint unavailable' || clean === 'not available') return true;
+    if (clean.startsWith('127.')) return true;
+    if (clean.startsWith('10.')) return true;
+    if (clean.startsWith('192.168.')) return true;
+    if (clean.startsWith('169.254.')) return true;
+    if (clean.startsWith('172.')) {
+      const parts = clean.split('.');
+      if (parts.length >= 2) {
+        const second = parseInt(parts[1], 10);
+        if (!isNaN(second) && second >= 16 && second <= 31) {
+          return true; // 172.16.0.0/12 (includes Docker bridge networks)
+        }
+      }
+    }
+    return false;
+  }
+
   async function detectPublicIp(): Promise<string | null> {
     const services = [
       'https://api.ipify.org?format=json',
@@ -1079,15 +1100,16 @@ segment3.ts
         const res = await fetch(service, { signal: controller.signal });
         clearTimeout(id);
         if (res.ok) {
-          if (service.includes('ipinfo.io')) {
+          let candidate = '';
+          if (service.includes('ipinfo.io') || service.includes('ipify')) {
             const data: any = await res.json();
-            if (data && data.ip) return data.ip.trim();
-          } else if (service.includes('ipify')) {
-            const data: any = await res.json();
-            if (data && data.ip) return data.ip.trim();
+            if (data && data.ip) candidate = data.ip.trim();
           } else {
             const text = await res.text();
-            if (text && text.trim()) return text.trim();
+            if (text && text.trim()) candidate = text.trim();
+          }
+          if (candidate && !isPrivateOrLoopbackIp(candidate)) {
+            return candidate;
           }
         }
       } catch (e: any) {
@@ -1115,40 +1137,14 @@ segment3.ts
       for (const net of interfaces[name] || []) {
         if (net.family === 'IPv4' && !net.internal) {
           const ip = net.address;
-          
-          if (ip.startsWith('172.17.') || ip.startsWith('172.18.') || ip.startsWith('172.19.')) {
-            continue;
+          if (!isPrivateOrLoopbackIp(ip) || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+            candidates.push(ip);
           }
-          candidates.push(ip);
         }
       }
     }
     
-    if (candidates.length === 0) {
-      return '127.0.0.1';
-    }
-    
-    const getPreferenceLevel = (ip: string): number => {
-      if (ip.startsWith('192.168.')) {
-        return 1;
-      }
-      if (ip.startsWith('10.')) {
-        return 2;
-      }
-      if (ip.startsWith('172.')) {
-        const parts = ip.split('.');
-        if (parts.length >= 2) {
-          const secondOctet = parseInt(parts[1], 10);
-          if (secondOctet >= 20 && secondOctet <= 31) {
-            return 3;
-          }
-        }
-      }
-      return 4;
-    };
-    
-    candidates.sort((a, b) => getPreferenceLevel(a) - getPreferenceLevel(b));
-    return candidates[0];
+    return candidates[0] || '127.0.0.1';
   }
 
   function isLocalEnvironment(): boolean {
@@ -1184,10 +1180,9 @@ segment3.ts
   }
 
   async function resolveRuntimeEndpoint(req?: any) {
-    // Determine which deployment settings to use
-    let mode = serverSettings.deploymentMode;
-    let customDomain = serverSettings.customDomain;
-    let manualIp = serverSettings.manualIp;
+    let mode = serverSettings.deploymentMode || 'auto';
+    let customDomain = serverSettings.customDomain || '';
+    let manualIp = serverSettings.manualIp || '';
 
     if (req && req.headers) {
       if (req.headers['x-deployment-mode']) {
@@ -1201,47 +1196,73 @@ segment3.ts
       }
     }
 
-    // LAN IP and Public IP are detected independently
-    const lanIp = getLocalIp();
-    const publicIp = await detectPublicIp();
+    const envDomain = (process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '').trim();
+    const envPublicIp = (process.env.PUBLIC_IP || '').trim();
+
+    const effectiveDomain = (customDomain || envDomain).trim();
+    const cleanManualIp = manualIp.trim();
 
     let activeEndpoint = '';
     let source = '';
 
-    const cleanManualIp = (manualIp || '').trim();
-    const isValidManualIp = cleanManualIp !== '' && cleanManualIp !== '0.0.0.0' && cleanManualIp !== '127.0.0.1';
-
-    // 1. Manual IP saved in Settings / Header
-    if (isValidManualIp) {
+    // Priority 1: Configured DOMAIN
+    if (effectiveDomain && (mode === 'domain' || mode === 'auto')) {
+      activeEndpoint = effectiveDomain;
+      source = 'Configured Domain';
+    }
+    // Priority 2: Configured PUBLIC_IP
+    else if (cleanManualIp && !isPrivateOrLoopbackIp(cleanManualIp)) {
       activeEndpoint = cleanManualIp;
-      source = 'Manual IP Settings';
+      source = 'Configured Public IP';
     }
-    // 2. Custom Domain (if in domain mode or domain is explicitly set)
-    else if (mode === 'domain' && (customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN)) {
-      activeEndpoint = customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || 'localhost';
-      source = 'Domain Mode';
+    else if (envPublicIp && !isPrivateOrLoopbackIp(envPublicIp)) {
+      activeEndpoint = envPublicIp;
+      source = 'Environment Public IP';
     }
-    // 3. Detected LAN IP (if not loopback)
-    else if (lanIp && lanIp !== '127.0.0.1') {
-      activeEndpoint = lanIp;
-      source = 'Local LAN IP';
-    }
-    // 4. Public IP (if enabled/available)
-    else if (publicIp && publicIp !== '127.0.0.1' && publicIp !== 'Not available') {
-      activeEndpoint = publicIp;
-      source = 'Public VPS IP';
-    }
-    // 5. 127.0.0.1 (last fallback only)
+    // Priority 3: Auto-detected Public IP
     else {
-      activeEndpoint = '127.0.0.1';
-      source = 'Localhost Fallback';
+      const detectedPublic = await detectPublicIp();
+      if (detectedPublic && !isPrivateOrLoopbackIp(detectedPublic)) {
+        activeEndpoint = detectedPublic;
+        source = 'Auto-Detected Public IP';
+
+        if (serverSettings.lastDetectedPublicIp !== detectedPublic) {
+          serverSettings.lastDetectedPublicIp = detectedPublic;
+          saveServerSettings();
+        }
+      }
+      // Priority 4: Saved Public IP Fallback (when auto-detection fails)
+      else if (serverSettings.lastDetectedPublicIp && !isPrivateOrLoopbackIp(serverSettings.lastDetectedPublicIp)) {
+        activeEndpoint = serverSettings.lastDetectedPublicIp;
+        source = 'Saved Public IP Fallback';
+      }
+      else if (serverSettings.manualIp && !isPrivateOrLoopbackIp(serverSettings.manualIp)) {
+        activeEndpoint = serverSettings.manualIp;
+        source = 'Saved Manual IP Fallback';
+      }
+      // Priority 5: Only use LAN IP if explicitly enabled (mode === 'lan')
+      else if (mode === 'lan') {
+        const lanIp = getLocalIp();
+        activeEndpoint = (lanIp && lanIp !== '127.0.0.1') ? lanIp : '127.0.0.1';
+        source = 'LAN IP (Explicitly Enabled)';
+      }
+      // Fallback: If auto-detection fails and no domain or saved public IP exists
+      else {
+        activeEndpoint = 'Endpoint unavailable';
+        source = 'No Public Endpoint Resolved';
+      }
     }
+
+    const lanIp = getLocalIp();
+    const resolvedPublicIp = (activeEndpoint && !isPrivateOrLoopbackIp(activeEndpoint) && !activeEndpoint.includes(':'))
+      ? activeEndpoint
+      : (serverSettings.lastDetectedPublicIp || '');
 
     return {
       activeEndpoint,
       source,
-      domain: (mode === 'domain' || (mode === 'auto' && (customDomain || process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN))) ? activeEndpoint : '',
-      publicIp: publicIp || '', // Show blank/empty if detection fails
+      domain: effectiveDomain,
+      publicIp: resolvedPublicIp,
       lanIp
     };
   }
@@ -1251,13 +1272,29 @@ segment3.ts
     const details = await resolveRuntimeEndpoint(req);
     const activeEndpoint = details.activeEndpoint;
 
-    // Use correct protocol based on whether active endpoint is a domain vs. raw IP
-    const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(activeEndpoint);
-    const proto = isIp ? 'http' : 'https';
+    if (activeEndpoint === 'Endpoint unavailable') {
+      return {
+        ...s,
+        rtmpUrl: 'Endpoint unavailable',
+        ingestIp: 'Endpoint unavailable',
+        playbackUrls: {
+          baseUrl: 'Endpoint unavailable',
+          master: 'Endpoint unavailable',
+          p1080: 'Endpoint unavailable',
+          p720: 'Endpoint unavailable',
+          p480: 'Endpoint unavailable',
+          p360: 'Endpoint unavailable',
+          dash: 'Endpoint unavailable',
+          embed: 'Endpoint unavailable'
+        }
+      };
+    }
 
-    // Override rtmpUrl and ingestIp dynamically at runtime
+    const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(activeEndpoint);
+    const proto = isIp ? 'http' : (serverSettings.ssl?.installed ? 'https' : 'http');
+
     const dynamicRtmpUrl = `rtmp://${activeEndpoint}/ingest`;
-    const dynamicIngestIp = isIp ? activeEndpoint : (details.publicIp ? details.publicIp : details.lanIp);
+    const dynamicIngestIp = activeEndpoint;
 
     return {
       ...s,

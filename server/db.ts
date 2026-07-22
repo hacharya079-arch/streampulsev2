@@ -210,8 +210,8 @@ if (fs.existsSync(JSON_DB_PATH)) {
       users: parsed.users || [],
       streams: (parsed.streams || []).map((s: any) => ({
         ...s,
-        rtmpUrl: 'rtmp://localhost/live',
-        ingestIp: '127.0.0.1'
+        rtmpUrl: s.rtmpUrl || 'rtmp://localhost/ingest',
+        ingestIp: s.ingestIp || '127.0.0.1'
       })),
       devices: parsed.devices || [],
       deviceGroups: parsed.deviceGroups || [],
@@ -917,11 +917,10 @@ export const db = {
   createStream: async (stream: Omit<StreamRecord, 'id' | 'viewers'>): Promise<StreamRecord> => {
     const id = Math.random().toString(36).substring(2, 11);
     
-    // Ensure that we do not store any actual IP address (Requirement 5)
     const dbStream = {
       ...stream,
-      rtmpUrl: 'rtmp://localhost/live',
-      ingestIp: '127.0.0.1'
+      rtmpUrl: stream.rtmpUrl || 'rtmp://localhost/ingest',
+      ingestIp: stream.ingestIp || '127.0.0.1'
     };
 
     if (usePostgres && pgPool) {
@@ -965,14 +964,7 @@ export const db = {
   },
 
   updateStream: async (id: string, updates: Partial<StreamRecord>): Promise<StreamRecord | null> => {
-    // Ensure that we do not store any actual IP address (Requirement 5)
     const dbUpdates = { ...updates };
-    if (dbUpdates.rtmpUrl !== undefined) {
-      dbUpdates.rtmpUrl = 'rtmp://localhost/live';
-    }
-    if (dbUpdates.ingestIp !== undefined) {
-      dbUpdates.ingestIp = '127.0.0.1';
-    }
 
     if (usePostgres && pgPool) {
       // Formulate dynamic SQL query

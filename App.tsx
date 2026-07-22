@@ -452,9 +452,9 @@ CREATE TABLE IF NOT EXISTS streams (
       try {
         const response = await fetch('https://api.ipify.org?format=json');
         const data = await response.json();
-        setDetectedPublicIp(data.ip);
+        setDetectedPublicIp(data.ip || '');
       } catch (e) {
-        setDetectedPublicIp('154.12.88.2');
+        setDetectedPublicIp('');
       }
     };
 
@@ -471,7 +471,7 @@ CREATE TABLE IF NOT EXISTS streams (
         }
       };
       setTimeout(() => {
-        setDetectedLanIp(prev => prev === 'Detecting...' ? '192.168.1.100' : prev);
+        setDetectedLanIp(prev => prev === 'Detecting...' ? '' : prev);
       }, 2000);
     };
 

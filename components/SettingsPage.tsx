@@ -698,26 +698,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         <a href={networkDetails?.dashboardUrl || '#'} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Open</a>
                       </div>
                       <div className="bg-zinc-900 border border-zinc-855 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-300 truncate">
-                        {networkDetails?.dashboardUrl || `http://${detectedLanIp || 'localhost'}:3000`}
+                        {networkDetails?.dashboardUrl || 'Endpoint unavailable'}
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="text-[9px] font-bold text-zinc-500 uppercase">API Endpoint</div>
                       <div className="bg-zinc-900 border border-zinc-855 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-300 truncate">
-                        {networkDetails?.apiUrl || `http://${detectedLanIp || 'localhost'}:3000/api`}
+                        {networkDetails?.apiUrl || 'Endpoint unavailable'}
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="text-[9px] font-bold text-zinc-500 uppercase">RTMP Ingest Address</div>
                       <div className="bg-zinc-900 border border-zinc-855 rounded-lg px-2.5 py-1.5 text-xs font-mono text-blue-400 truncate flex justify-between items-center">
-                        <span>{networkDetails?.rtmpUrl || `rtmp://${detectedLanIp || 'localhost'}:1935/ingest`}</span>
+                        <span>{networkDetails?.rtmpUrl || 'Endpoint unavailable'}</span>
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(networkDetails?.rtmpUrl || `rtmp://${detectedLanIp || 'localhost'}:1935/ingest`);
-                            setCopiedUrlKey('rtmp');
-                            setTimeout(() => setCopiedUrlKey(null), 1500);
+                            if (networkDetails?.rtmpUrl) {
+                              navigator.clipboard.writeText(networkDetails.rtmpUrl);
+                              setCopiedUrlKey('rtmp');
+                              setTimeout(() => setCopiedUrlKey(null), 1500);
+                            }
                           }}
                           className="text-zinc-500 hover:text-white transition"
                         >
@@ -729,7 +731,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <div className="space-y-1">
                       <div className="text-[9px] font-bold text-zinc-500 uppercase">HLS Playback Playlist (M3U8)</div>
                       <div className="bg-zinc-900 border border-zinc-855 rounded-lg px-2.5 py-1.5 text-xs font-mono text-purple-400 truncate">
-                        {networkDetails?.hlsUrl ? networkDetails.hlsUrl.replace('{stream_key}', '••••••••') : `http://${detectedLanIp || 'localhost'}/hls/••••••••/master.m3u8`}
+                        {networkDetails?.hlsUrl ? networkDetails.hlsUrl.replace('{stream_key}', '••••••••') : 'Endpoint unavailable'}
                       </div>
                     </div>
                   </div>
