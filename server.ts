@@ -3601,4 +3601,7 @@ segment3.ts
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[Startup] CRITICAL: Fatal unhandled error during server startup:', err);
+  process.exit(1);
+});

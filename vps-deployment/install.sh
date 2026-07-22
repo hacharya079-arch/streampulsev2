@@ -911,10 +911,7 @@ http {
         location /stat {
             rtmp_stat all;
             rtmp_stat_stylesheet stat.xsl;
-<<<<<<< HEAD
 
-=======
->>>>>>> 10d10ef (Add RTMP statistics configuration)
             add_header Access-Control-Allow-Origin * always;
         }
 
@@ -942,9 +939,6 @@ http {
                 add_header 'Content-Length' 0;
                 return 204;
             }
-
-
-
 
             types {
                 application/vnd.apple.mpegurl m3u8;

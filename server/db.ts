@@ -300,10 +300,18 @@ export const db = {
   // Initialize Database tables if PostgreSQL is connected
   init: async () => {
     if (usePostgres && pgPool) {
-      try {
-        console.log('Connecting to PostgreSQL database to verify tables and migrate...');
-        const client = await pgPool.connect();
+      const maxRetries = 60;
+      const initialDelayMs = 1000;
+      const maxDelayMs = 10000;
+
+      console.log(`[Database] Initializing PostgreSQL connection to ${process.env.DB_HOST}:${process.env.DB_PORT || '5432'}/${process.env.DB_NAME}...`);
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        let client: pg.PoolClient | null = null;
         try {
+          console.log(`[Database] Connection attempt ${attempt}/${maxRetries} to PostgreSQL...`);
+          client = await pgPool.connect();
+
           await client.query(`
             CREATE TABLE IF NOT EXISTS users (
               id SERIAL PRIMARY KEY,
@@ -442,18 +450,35 @@ export const db = {
               enabled BOOLEAN DEFAULT TRUE
             );
           `);
-          console.log('PostgreSQL Database tables verified/created successfully.');
-        } finally {
+
+          console.log('[Database] PostgreSQL Database tables verified/created successfully.');
           client.release();
-        }
-      } catch (err) {
-        console.error('CRITICAL: Error connecting to or migrating PostgreSQL database:', err);
-        if (!isDevFallbackAllowed) {
-          console.error('Database connection and migration failures in "postgres" storage mode are fatal. Aborting startup.');
-          throw err;
-        } else {
-          console.log('Switching to local secure file-system persistence (data/db.json) as allowed by storage mode.');
-          usePostgres = false;
+          client = null;
+          break; // Connected and migrated successfully
+        } catch (err: any) {
+          if (client) {
+            try { client.release(); } catch (_) {}
+            client = null;
+          }
+
+          const remaining = maxRetries - attempt;
+          const errCode = err.code || 'UNKNOWN';
+          const errMsg = err.message || String(err);
+
+          if (attempt === maxRetries) {
+            console.error(`[Database] CRITICAL: Exhausted all ${maxRetries} connection/migration attempts. Last error [${errCode}]: ${errMsg}`);
+            if (!isDevFallbackAllowed) {
+              console.error('[Database] Database connection and migration failures in "postgres" storage mode are fatal. Aborting startup.');
+              throw err;
+            } else {
+              console.log('[Database] Switching to local secure file-system persistence (data/db.json) as allowed by storage mode.');
+              usePostgres = false;
+            }
+          } else {
+            const delay = Math.min(Math.round(initialDelayMs * Math.pow(1.25, attempt - 1)), maxDelayMs);
+            console.warn(`[Database] Connection attempt ${attempt}/${maxRetries} failed [Code: ${errCode}]: ${errMsg}. Retrying in ${delay}ms... (${remaining} attempts remaining)`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
         }
       }
     } else {
