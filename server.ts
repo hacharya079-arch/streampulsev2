@@ -2,10 +2,12 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import net from 'net';
+import dns from 'dns';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
-import { exec, spawn } from 'child_process';
+import { exec, execSync, spawn } from 'child_process';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './server/db.ts';
 import { createServer } from 'http';
@@ -1153,7 +1155,6 @@ segment3.ts
 
     // Check systemd-detect-virt
     try {
-      const { execSync } = require('child_process');
       const virt = execSync('systemd-detect-virt 2>/dev/null || echo "none"', { timeout: 1000 }).toString().trim().toLowerCase();
       if (virt === 'oracle' || virt === 'vmware' || virt === 'virtualbox' || virt === 'qemu') {
         return true;
@@ -1162,7 +1163,6 @@ segment3.ts
 
     // Check DMI details if on Linux
     try {
-      const { execSync } = require('child_process');
       const productName = execSync('cat /sys/class/dmi/id/product_name 2>/dev/null || echo ""', { timeout: 1000 }).toString().trim().toLowerCase();
       const sysVendor = execSync('cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo ""', { timeout: 1000 }).toString().trim().toLowerCase();
       if (productName.includes('virtualbox') || productName.includes('vmware') ||
@@ -1597,7 +1597,6 @@ segment3.ts
       return res.status(400).json({ error: 'Domain name is required' });
     }
     try {
-      const dns = await import('dns');
       dns.promises.resolve4(domain)
         .then((ips) => {
           res.json({ 
@@ -1619,7 +1618,6 @@ segment3.ts
   // Domain Verification Endpoint for Diagnostic Check Card
   app.get('/api/settings/domain/verify', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
-      const dns = await import('dns');
       const publicIp = await detectPublicIp();
       const domain = serverSettings.customDomain || '';
       
@@ -1642,7 +1640,7 @@ segment3.ts
       // Port checking utility
       const checkPort = (port: number, host: string): Promise<boolean> => {
         return new Promise((resolve) => {
-          const socket = new (require('net').Socket)();
+          const socket = new net.Socket();
           socket.setTimeout(500);
           socket.on('connect', () => { socket.destroy(); resolve(true); });
           socket.on('timeout', () => { socket.destroy(); resolve(false); });
@@ -1662,7 +1660,7 @@ segment3.ts
       // Service Process/Container checks
       const execPromise = (cmd: string): Promise<boolean> => {
         return new Promise((resolve) => {
-          require('child_process').exec(cmd, (err: any) => {
+          exec(cmd, (err: any) => {
             resolve(!err);
           });
         });
