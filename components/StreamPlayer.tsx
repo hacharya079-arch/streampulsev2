@@ -2192,18 +2192,12 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                             }}
                             className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500"
                           >
-                            <option value="Source (Original)">Source (Original)</option>
-                            <option value="4K (3840×2160)">4K (3840×2160)</option>
-                            <option value="2K (2560×1440)">2K (2560×1440)</option>
-                            <option value="1080p (1920×1080)">1080p (1920×1080)</option>
-                            <option value="900p (1600×900)">900p (1600×900)</option>
-                            <option value="720p (1280×720)">720p (1280×720)</option>
-                            <option value="576p (1024×576)">576p (1024×576)</option>
-                            <option value="480p (854×480)">480p (854×480)</option>
-                            <option value="360p (640×360)">360p (640×360)</option>
-                            <option value="240p (426×240)">240p (426×240)</option>
-                            <option value="Audio Only">Audio Only</option>
-                            <option value="Custom Resolution">Custom Resolution</option>
+                            <option value="Original">Original (Source Resolution)</option>
+                            <option value="1080p">1080p Full HD (1920×1080)</option>
+                            <option value="720p">720p HD (1280×720)</option>
+                            <option value="480p">480p SD (854×480)</option>
+                            <option value="360p">360p Low (640×360)</option>
+                            <option value="Custom Resolution">Custom (Manual Selection)</option>
                           </select>
                         </div>
                         <div className="text-[10px] text-zinc-500 leading-tight">

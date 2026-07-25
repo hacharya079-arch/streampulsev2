@@ -299,17 +299,18 @@ async function startServer() {
 
   const getResolutionPreset = (resolution: string, customData?: any): ResolutionSpec => {
     const defaults: Record<string, Omit<ResolutionSpec, 'name'>> = {
-      'Source (Original)': { width: 1920, height: 1080, fps: 30, videoBitrate: '6000k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '4K': { width: 3840, height: 2160, fps: 60, videoBitrate: '12000k', audioBitrate: '256k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '2K': { width: 2560, height: 1440, fps: 60, videoBitrate: '8000k', audioBitrate: '192k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '1080p': { width: 1920, height: 1080, fps: 30, videoBitrate: '5000k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '900p': { width: 1600, height: 900, fps: 30, videoBitrate: '4000k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '720p': { width: 1280, height: 720, fps: 30, videoBitrate: '2500k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '576p': { width: 1024, height: 576, fps: 30, videoBitrate: '1800k', audioBitrate: '96k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '480p': { width: 854, height: 480, fps: 30, videoBitrate: '1200k', audioBitrate: '96k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '360p': { width: 640, height: 360, fps: 30, videoBitrate: '800k', audioBitrate: '64k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      '240p': { width: 426, height: 240, fps: 30, videoBitrate: '400k', audioBitrate: '64k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
-      'Audio Only': { width: 0, height: 0, fps: 0, videoBitrate: '0k', audioBitrate: '128k', aspectRatio: 'none', videoCodec: 'none', audioCodec: 'aac', preset: 'veryfast', profile: 'main', pixelFormat: 'yuv420p' },
+      'Original': { width: 0, height: 0, fps: 30, videoBitrate: '5000k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      'Source (Original)': { width: 0, height: 0, fps: 30, videoBitrate: '5000k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '4K': { width: 3840, height: 2160, fps: 60, videoBitrate: '12000k', audioBitrate: '256k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '2K': { width: 2560, height: 1440, fps: 60, videoBitrate: '8000k', audioBitrate: '192k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '1080p': { width: 1920, height: 1080, fps: 30, videoBitrate: '4500k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '900p': { width: 1600, height: 900, fps: 30, videoBitrate: '3500k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '720p': { width: 1280, height: 720, fps: 30, videoBitrate: '2500k', audioBitrate: '128k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '576p': { width: 1024, height: 576, fps: 30, videoBitrate: '1800k', audioBitrate: '96k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '480p': { width: 854, height: 480, fps: 30, videoBitrate: '1200k', audioBitrate: '96k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '360p': { width: 640, height: 360, fps: 30, videoBitrate: '700k', audioBitrate: '64k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      '240p': { width: 426, height: 240, fps: 30, videoBitrate: '400k', audioBitrate: '64k', aspectRatio: '16:9', videoCodec: 'libx264', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
+      'Audio Only': { width: 0, height: 0, fps: 0, videoBitrate: '0k', audioBitrate: '128k', aspectRatio: 'none', videoCodec: 'none', audioCodec: 'aac', preset: 'superfast', profile: 'main', pixelFormat: 'yuv420p' },
     };
 
     let lookupKey = resolution;
@@ -323,7 +324,7 @@ async function startServer() {
     else if (resolution.includes('360p') || resolution === '360p (640×360)') lookupKey = '360p';
     else if (resolution.includes('240p') || resolution === '240p (426×240)') lookupKey = '240p';
     else if (resolution.includes('Audio Only')) lookupKey = 'Audio Only';
-    else if (resolution.includes('Source')) lookupKey = 'Source (Original)';
+    else if (resolution.includes('Source') || resolution.includes('Original')) lookupKey = 'Original';
 
     if (resolution === 'Custom Resolution' || lookupKey === 'Custom Resolution') {
       return {
@@ -336,7 +337,7 @@ async function startServer() {
         aspectRatio: String(customData?.aspectRatio || '16:9'),
         videoCodec: String(customData?.videoCodec || 'libx264'),
         audioCodec: String(customData?.audioCodec || 'aac'),
-        preset: String(customData?.preset || 'veryfast'),
+        preset: String(customData?.preset || 'superfast'),
         profile: String(customData?.profile || 'main'),
         pixelFormat: String(customData?.pixelFormat || 'yuv420p'),
         gopSize: customData?.gopSize,
@@ -386,12 +387,23 @@ async function startServer() {
       return parsed.filter((p: any) => p.enabled !== false);
     }
 
-    let activeProfiles = [resolution];
-    if (enabledProfilesStr) {
+    let activeProfiles: string[] = [];
+
+    if (enabledProfilesStr && enabledProfilesStr.trim()) {
       activeProfiles = enabledProfilesStr.split(',').map(p => p.trim()).filter(Boolean);
     }
-    if (!activeProfiles.includes(resolution)) {
-      activeProfiles.unshift(resolution);
+
+    if (activeProfiles.length === 0) {
+      if (resolution === 'Original' || resolution === 'Source (Original)') {
+        activeProfiles = ['Original'];
+      } else if (resolution === 'Custom (Manual)' || resolution === 'Manual') {
+        activeProfiles = ['Original', '1080p', '720p', '480p', '360p'];
+      } else if (resolution) {
+        const cleanRes = resolution.replace(/ \(.*/, '').trim();
+        activeProfiles = [cleanRes];
+      } else {
+        activeProfiles = ['1080p'];
+      }
     }
 
     return activeProfiles.map(pName => {
@@ -408,12 +420,12 @@ async function startServer() {
                     presetSpec.videoCodec === 'libx265' || presetSpec.videoCodec === 'H.265' ? 'H.265' :
                     presetSpec.videoCodec === 'libsvtav1' || presetSpec.videoCodec === 'AV1' ? 'AV1' : 'H.264',
         bitrate: parseInt(presetSpec.videoBitrate) || 2500,
-        encoderPreset: presetSpec.preset || 'veryfast',
+        encoderPreset: presetSpec.preset || 'superfast',
         profile: presetSpec.profile || 'main',
         pixelFormat: presetSpec.pixelFormat || 'yuv420p',
-        keyframeInterval: presetSpec.gopSize || (presetSpec.fps || 30) * 2,
-        maxBitrate: presetSpec.maxBitrate || (parseInt(presetSpec.videoBitrate) || 2500) * 1.2,
-        bufferSize: presetSpec.bufferSize || (parseInt(presetSpec.videoBitrate) || 2500) * 2,
+        keyframeInterval: presetSpec.gopSize || 60,
+        maxBitrate: presetSpec.maxBitrate || Math.round((parseInt(presetSpec.videoBitrate) || 2500) * 1.15),
+        bufferSize: presetSpec.bufferSize || Math.round((parseInt(presetSpec.videoBitrate) || 2500) * 1.6),
         scalingAlgorithm: presetSpec.scalingAlgorithm || 'bicubic',
         audioEnabled: presetSpec.audioEnabled !== false,
         audioCodec: presetSpec.audioCodec || 'aac',
@@ -2105,6 +2117,48 @@ segment3.ts
     } catch (err) {
       console.error('[Streaming Engine] Preview command generation failed:', err);
       res.status(500).json({ error: 'Failed to generate preview command' });
+    }
+  });
+
+  app.get('/api/rtmp/transcode-config/:key', async (req: any, res: any) => {
+    const streamKey = req.params.key;
+    if (!streamKey) {
+      return res.status(400).json({ error: 'Stream key is required' });
+    }
+
+    try {
+      const stream = await db.getStreamByKey(streamKey);
+      if (!stream) {
+        return res.status(404).json({ error: 'Stream not found' });
+      }
+
+      const activeProfiles = getActiveOutputProfiles(
+        stream.resolution,
+        stream.enabledProfiles,
+        stream.profilesJson,
+        stream
+      );
+
+      res.json({
+        streamKey: stream.streamKey,
+        title: stream.title,
+        resolution: stream.resolution,
+        enabledProfiles: stream.enabledProfiles,
+        variants: activeProfiles.map(p => ({
+          name: p.name,
+          width: p.width,
+          height: p.height,
+          bitrate: `${p.bitrate}k`,
+          maxBitrate: `${p.maxBitrate || Math.round(p.bitrate * 1.15)}k`,
+          bufferSize: `${p.bufferSize || Math.round(p.bitrate * 1.6)}k`,
+          audioBitrate: `${p.audioBitrate}k`,
+          fps: p.fps || 30,
+          encoderPreset: p.encoderPreset || 'superfast'
+        }))
+      });
+    } catch (err: any) {
+      console.error('[Transcode Config API] Error:', err);
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
