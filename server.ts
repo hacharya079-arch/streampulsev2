@@ -1089,16 +1089,27 @@ segment3.ts
     return false;
   }
 
+  function getHlsDir(streamKey: string): string {
+    const vpsPath = `/var/www/hls/${streamKey}`;
+    const localPath = path.resolve(`./data/hls/${streamKey}`);
+    if (fs.existsSync(vpsPath)) return vpsPath;
+    return localPath;
+  }
+
   async function detectPublicIp(): Promise<string | null> {
     const services = [
       'https://api.ipify.org?format=json',
       'https://ipinfo.io/json',
-      'https://icanhazip.com'
+      'https://ifconfig.me/ip',
+      'https://icanhazip.com',
+      'https://checkip.amazonaws.com',
+      'https://v4.ident.me'
     ];
-    for (const service of services) {
+
+    const fetchSingleService = async (service: string): Promise<string | null> => {
       try {
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 4000);
+        const id = setTimeout(() => controller.abort(), 2500);
         const res = await fetch(service, { signal: controller.signal });
         clearTimeout(id);
         if (res.ok) {
@@ -1115,9 +1126,20 @@ segment3.ts
           }
         }
       } catch (e: any) {
-        console.debug(`[Network Detection] Service ${service} bypassed or timeout`);
+        // Silently continue
       }
-    }
+      return null;
+    };
+
+    try {
+      const results = await Promise.allSettled(services.map(s => fetchSingleService(s)));
+      for (const res of results) {
+        if (res.status === 'fulfilled' && res.value) {
+          return res.value;
+        }
+      }
+    } catch (e) {}
+
     return null;
   }
 
@@ -1196,6 +1218,7 @@ segment3.ts
       }
     }
 
+    const envPublicHost = (process.env.PUBLIC_HOST || '').replace(/^https?:\/\//i, '').split('/')[0].trim();
     const envDomain = (process.env.DOMAIN_NAME || process.env.DOMAIN || process.env.SERVER_DOMAIN || '').trim();
     const envPublicIp = (process.env.PUBLIC_IP || '').trim();
 
@@ -1205,8 +1228,13 @@ segment3.ts
     let activeEndpoint = '';
     let source = '';
 
+    // Priority 0: Environment PUBLIC_HOST
+    if (envPublicHost && !isPrivateOrLoopbackIp(envPublicHost)) {
+      activeEndpoint = envPublicHost;
+      source = 'Environment PUBLIC_HOST';
+    }
     // Priority 1: Configured DOMAIN
-    if (effectiveDomain && (mode === 'domain' || mode === 'auto')) {
+    else if (effectiveDomain && (mode === 'domain' || mode === 'auto')) {
       activeEndpoint = effectiveDomain;
       source = 'Configured Domain';
     }
@@ -1240,23 +1268,27 @@ segment3.ts
         activeEndpoint = serverSettings.manualIp;
         source = 'Saved Manual IP Fallback';
       }
-      // Priority 5: Only use LAN IP if explicitly enabled (mode === 'lan')
-      else if (mode === 'lan') {
-        const lanIp = getLocalIp();
-        activeEndpoint = (lanIp && lanIp !== '127.0.0.1') ? lanIp : '127.0.0.1';
-        source = 'LAN IP (Explicitly Enabled)';
-      }
-      // Fallback: If auto-detection fails and no domain or saved public IP exists, use request host header if available
+      // Priority 5: Request host header
       else if (req && req.headers) {
         const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '').toString();
         const cleanHost = hostHeader.split(':')[0].trim();
-        if (cleanHost && cleanHost !== '0.0.0.0' && cleanHost !== 'localhost') {
+        if (cleanHost && cleanHost !== '0.0.0.0' && cleanHost !== 'localhost' && !isPrivateOrLoopbackIp(cleanHost)) {
           activeEndpoint = cleanHost;
           source = 'HTTP Request Host Header';
+        } else if (mode === 'lan') {
+          const lanIp = getLocalIp();
+          activeEndpoint = (lanIp && lanIp !== '127.0.0.1') ? lanIp : '127.0.0.1';
+          source = 'LAN IP (Explicitly Enabled)';
         } else {
           activeEndpoint = 'Endpoint unavailable';
           source = 'No Public Endpoint Resolved';
         }
+      }
+      // Priority 6: Only use LAN IP if explicitly enabled
+      else if (mode === 'lan') {
+        const lanIp = getLocalIp();
+        activeEndpoint = (lanIp && lanIp !== '127.0.0.1') ? lanIp : '127.0.0.1';
+        source = 'LAN IP (Explicitly Enabled)';
       }
       else {
         activeEndpoint = 'Endpoint unavailable';
@@ -1301,8 +1333,10 @@ segment3.ts
       };
     }
 
-    const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(activeEndpoint);
-    const proto = isIp ? 'http' : (serverSettings.ssl?.installed ? 'https' : 'http');
+    const isHttps = (req && (req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https' || req.secure)) ||
+                    serverSettings.ssl?.httpsStatus === 'enabled' ||
+                    serverSettings.ssl?.installed;
+    const proto = isHttps ? 'https' : 'http';
 
     const dynamicRtmpUrl = `rtmp://${activeEndpoint}/ingest`;
     const dynamicIngestIp = activeEndpoint;
@@ -3618,6 +3652,111 @@ segment3.ts
       });
     }
   });
+
+  function startStreamMonitoringService() {
+    console.log('[Stream Monitor] Initializing real-time stream status & analytics monitoring service...');
+    setInterval(async () => {
+      try {
+        const streams = await db.getStreams();
+        if (!streams || streams.length === 0) return;
+
+        let activeCount = 0;
+        let totalViewers = 0;
+
+        for (const s of streams) {
+          if (s.status === 'disabled') continue;
+
+          const hlsKeyDir = getHlsDir(s.streamKey);
+          const masterPath = path.join(hlsKeyDir, 'master.m3u8');
+          const index720Path = path.join(hlsKeyDir, '720p', 'index.m3u8');
+
+          let lastMtime = 0;
+
+          if (fs.existsSync(masterPath)) {
+            const stat = fs.statSync(masterPath);
+            lastMtime = stat.mtimeMs;
+          } else if (fs.existsSync(index720Path)) {
+            const stat = fs.statSync(index720Path);
+            lastMtime = stat.mtimeMs;
+          }
+
+          const isHlsFresh = (Date.now() - lastMtime) < 20000;
+          const isFfRunning = activeFfProcesses.has(s.streamKey);
+
+          const isCurrentlyActive = isHlsFresh || isFfRunning;
+
+          if (isCurrentlyActive) {
+            activeCount++;
+            totalViewers += (s.viewers || 0);
+
+            if (s.status !== 'live') {
+              console.log(`[Stream Monitor] Stream "${s.title}" (${s.streamKey}) is actively transcoding/broadcasting. Updating status -> live`);
+              await db.updateStream(s.id, { status: 'live', startTime: s.startTime || new Date().toISOString() });
+              broadcastToDashboards({
+                type: 'stream_status_change',
+                streamId: s.id,
+                streamKey: s.streamKey,
+                status: 'live'
+              });
+            }
+          } else if (!isCurrentlyActive && s.status === 'live') {
+            console.log(`[Stream Monitor] Stream "${s.title}" (${s.streamKey}) is no longer active. Updating status -> offline`);
+            await db.updateStream(s.id, { status: 'offline', viewers: 0 });
+            broadcastToDashboards({
+              type: 'stream_status_change',
+              streamId: s.id,
+              streamKey: s.streamKey,
+              status: 'offline'
+            });
+          }
+        }
+
+        const freeSpace = os.freemem();
+        const totalSpace = os.totalmem();
+        const memUsage = Math.round(((totalSpace - freeSpace) / totalSpace) * 100);
+        const cpuLoad = os.loadavg()[0];
+
+        broadcastToDashboards({
+          type: 'analytics_update',
+          timestamp: new Date().toISOString(),
+          activeStreams: activeCount,
+          totalViewers,
+          systemMetrics: {
+            cpuUsage: Math.min(Math.round(cpuLoad * 10), 100),
+            memoryUsage: memUsage,
+            freeMemoryGb: (freeSpace / 1024 / 1024 / 1024).toFixed(2)
+          }
+        });
+      } catch (err) {
+        console.error('[Stream Monitor] Error in monitoring cycle:', err);
+      }
+    }, 4000);
+  }
+
+  async function initializeServerBoot() {
+    try {
+      const users = await db.getUsers();
+      if (!users || users.length === 0) {
+        console.log('[Boot Init] No users found. Initializing default administrator account...');
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash('admin123', salt);
+        await db.createUser('admin', 'admin@streampulse.io', hash, 'admin');
+        console.log('[Boot Init] Default admin user created (Username: admin)');
+      }
+
+      const detected = await detectPublicIp();
+      if (detected) {
+        console.log(`[Boot Init] Successfully resolved VPS Public IPv4: ${detected}`);
+        serverSettings.lastDetectedPublicIp = detected;
+        saveServerSettings();
+      }
+    } catch (err) {
+      console.error('[Boot Init] Initialization check error:', err);
+    }
+  }
+
+  startStreamMonitoringService();
+  await initializeServerBoot();
 
   const serverInstance = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`StreamPulse VPS Core listening on http://localhost:${PORT}`);
