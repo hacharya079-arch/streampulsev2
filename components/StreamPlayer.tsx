@@ -2155,7 +2155,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             ) : (
               <div className="space-y-3 animate-in fade-in slide-in-from-right-2 duration-300 max-h-[450px] overflow-y-auto pr-1 no-scrollbar">
                 {/* Resolution Management Panel */}
-                {isAdmin && (
+                {isAdmin ? (
                   <div className="bg-zinc-950/80 rounded-xl p-3 border border-zinc-800/80 space-y-3">
                     <div className="flex items-center justify-between">
                       <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -3150,6 +3150,20 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                     </div>
                   )}
                 </div>
+                ) : (
+                  <div className="bg-zinc-950/80 rounded-xl p-4 border border-zinc-800/80 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Sliders className="w-4 h-4 text-blue-400" />
+                      <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">Streaming Profile Settings</h4>
+                    </div>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      🔒 Resolution settings and streaming profiles are restricted and managed automatically by system Administrators.
+                    </p>
+                    <div className="pt-2 flex items-center justify-between text-[11px] text-zinc-500 border-t border-zinc-800/60">
+                      <span>Current Mode: <strong className="text-zinc-300">{stream.resolution || 'Original'}</strong></span>
+                      <span className="text-blue-400 font-semibold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">Broadcaster View Only</span>
+                    </div>
+                  </div>
                 )}
 
                 {/* Live Playback Engine Monitoring Panel */}

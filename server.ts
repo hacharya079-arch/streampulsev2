@@ -61,11 +61,10 @@ interface ServerSettings {
     hlsSegmentDuration: number;
     playlistLength: number;
     recordingEnabled: boolean;
+    defaultResolutionMode?: string;
+    defaultEnabledProfiles?: string;
     ffmpegProfiles: {
-      '1080p': boolean;
-      '720p': boolean;
-      '480p': boolean;
-      '360p': boolean;
+      [key: string]: boolean;
     };
   };
 }
@@ -384,7 +383,46 @@ async function startServer() {
     }
 
     if (parsed.length > 0) {
-      return parsed.filter((p: any) => p.enabled !== false);
+      return parsed
+        .filter((p: any) => p.enabled !== false)
+        .map((p: any, idx: number) => {
+          const vBit = parseInt(String(p.bitrate || p.videoBitrate || 2500).replace(/k/gi, '')) || 2500;
+          const aBit = parseInt(String(p.audioBitrate || 128).replace(/k/gi, '')) || 128;
+          const gop = p.keyframeInterval !== undefined ? Number(p.keyframeInterval) : (p.gopSize !== undefined ? Number(p.gopSize) : 60);
+          const preset = p.encoderPreset || p.preset || 'superfast';
+          const w = Number(p.width) || 1280;
+          const h = Number(p.height) || 720;
+          const name = p.name || (w && h ? `${w}x${h}` : `Output ${idx + 1}`);
+
+          return {
+            ...p,
+            id: p.id || `profile_${idx + 1}`,
+            enabled: true,
+            name,
+            resolutionType: p.resolutionType || `${w}x${h}`,
+            width: w,
+            height: h,
+            fps: Number(p.fps) || 30,
+            videoCodec: p.videoCodec || 'H.264',
+            bitrate: vBit,
+            encoderPreset: preset,
+            preset,
+            profile: p.profile || 'main',
+            pixelFormat: p.pixelFormat || 'yuv420p',
+            keyframeInterval: gop,
+            gopSize: gop,
+            maxBitrate: p.maxBitrate !== undefined ? Number(p.maxBitrate) : Math.round(vBit * 1.15),
+            bufferSize: p.bufferSize !== undefined ? Number(p.bufferSize) : Math.round(vBit * 1.6),
+            scalingAlgorithm: p.scalingAlgorithm || 'bicubic',
+            audioEnabled: p.audioEnabled !== false,
+            audioCodec: p.audioCodec || 'aac',
+            audioBitrate: aBit,
+            audioSampleRate: p.audioSampleRate || 44100,
+            audioChannels: p.audioChannels || 'stereo',
+            audioVolume: p.audioVolume !== undefined ? p.audioVolume : 100,
+            audioNormalize: !!p.audioNormalize
+          };
+        });
     }
 
     let activeProfiles: string[] = [];
@@ -1837,7 +1875,10 @@ segment3.ts
       hlsSegmentDuration: 4,
       playlistLength: 5,
       recordingEnabled: false,
+      defaultResolutionMode: 'Original',
+      defaultEnabledProfiles: 'Original',
       ffmpegProfiles: {
+        'Original': true,
         '1080p': true,
         '720p': true,
         '480p': true,
@@ -1847,7 +1888,7 @@ segment3.ts
   });
 
   app.post('/api/settings/streaming', authenticateToken, requireAdmin, async (req: any, res) => {
-    const { rtmpPort, httpPort, httpsPort, hlsSegmentDuration, playlistLength, recordingEnabled, ffmpegProfiles } = req.body;
+    const { rtmpPort, httpPort, httpsPort, hlsSegmentDuration, playlistLength, recordingEnabled, ffmpegProfiles, defaultResolutionMode, defaultEnabledProfiles } = req.body;
     serverSettings.streaming = {
       rtmpPort: Number(rtmpPort) || 1935,
       httpPort: Number(httpPort) || 3000,
@@ -1855,7 +1896,10 @@ segment3.ts
       hlsSegmentDuration: Number(hlsSegmentDuration) || 4,
       playlistLength: Number(playlistLength) || 5,
       recordingEnabled: !!recordingEnabled,
+      defaultResolutionMode: defaultResolutionMode || 'Original',
+      defaultEnabledProfiles: defaultEnabledProfiles || 'Original',
       ffmpegProfiles: ffmpegProfiles || {
+        'Original': true,
         '1080p': true,
         '720p': true,
         '480p': true,
@@ -2162,11 +2206,22 @@ segment3.ts
     }
   });
 
-  app.post('/api/streams', authenticateToken, requireAdmin, async (req: any, res) => {
-    const { title, broadcaster, resolution, scheduledStart } = req.body;
+  app.post('/api/streams', authenticateToken, async (req: any, res) => {
+    const { title, broadcaster, scheduledStart } = req.body;
     if (!title || !broadcaster) {
       return res.status(400).json({ error: 'Title and broadcaster are required' });
     }
+
+    const isAdmin = req.user.role === 'admin';
+
+    // Broadcasters automatically get administrator-configured default streaming profile
+    const resolution = isAdmin 
+      ? (req.body.resolution || 'Original') 
+      : (serverSettings.streaming?.defaultResolutionMode || 'Original');
+
+    const enabledProfiles = isAdmin 
+      ? req.body.enabledProfiles 
+      : (serverSettings.streaming?.defaultEnabledProfiles || 'Original');
 
     try {
       // Auto-generate secure random stream key
@@ -2182,30 +2237,30 @@ segment3.ts
         status: scheduledStart ? 'scheduled' : 'offline',
         scheduledStart: scheduledStart || undefined,
         rtmpUrl,
-        resolution: resolution || '1080p',
-        bitrate: req.body.bitrate || (resolution === '4K' ? 10000 : resolution === '1080p' ? 6000 : 3500),
-        codec: req.body.videoCodec || 'H.264',
+        resolution,
+        bitrate: isAdmin ? (req.body.bitrate || 5000) : 5000,
+        codec: isAdmin ? (req.body.videoCodec || 'H.264') : 'H.264',
         ingestIp,
         startTime: scheduledStart ? undefined : new Date().toISOString(),
-        width: req.body.width,
-        height: req.body.height,
-        fps: req.body.fps,
-        aspectRatio: req.body.aspectRatio,
-        videoCodec: req.body.videoCodec,
-        audioCodec: req.body.audioCodec,
-        preset: req.body.preset,
-        profile: req.body.profile,
-        pixelFormat: req.body.pixelFormat,
-        enabledProfiles: req.body.enabledProfiles,
-        gopSize: req.body.gopSize,
-        bufferSize: req.body.bufferSize,
-        maxBitrate: req.body.maxBitrate,
-        scalingAlgorithm: req.body.scalingAlgorithm,
+        width: isAdmin ? req.body.width : undefined,
+        height: isAdmin ? req.body.height : undefined,
+        fps: isAdmin ? req.body.fps : 30,
+        aspectRatio: isAdmin ? req.body.aspectRatio : '16:9',
+        videoCodec: isAdmin ? req.body.videoCodec : 'libx264',
+        audioCodec: isAdmin ? req.body.audioCodec : 'aac',
+        preset: isAdmin ? req.body.preset : 'superfast',
+        profile: isAdmin ? req.body.profile : 'main',
+        pixelFormat: isAdmin ? req.body.pixelFormat : 'yuv420p',
+        enabledProfiles,
+        gopSize: isAdmin ? req.body.gopSize : 60,
+        bufferSize: isAdmin ? req.body.bufferSize : undefined,
+        maxBitrate: isAdmin ? req.body.maxBitrate : undefined,
+        scalingAlgorithm: isAdmin ? req.body.scalingAlgorithm : 'bicubic',
         audioEnabled: req.body.audioEnabled !== false,
-        audioBitrate: req.body.audioBitrate,
-        audioSampleRate: req.body.audioSampleRate,
-        audioChannels: req.body.audioChannels,
-        audioVolume: req.body.audioVolume,
+        audioBitrate: req.body.audioBitrate || '128k',
+        audioSampleRate: req.body.audioSampleRate || 44100,
+        audioChannels: req.body.audioChannels || 2,
+        audioVolume: req.body.audioVolume || 100,
         audioNormalize: req.body.audioNormalize,
         audioNoiseReduction: req.body.audioNoiseReduction,
         audioDelay: req.body.audioDelay,
@@ -2213,7 +2268,7 @@ segment3.ts
         audioTrackSelection: req.body.audioTrackSelection,
         audioPassthrough: req.body.audioPassthrough,
         audioTranscoding: req.body.audioTranscoding !== false,
-        profilesJson: req.body.profilesJson
+        profilesJson: isAdmin ? req.body.profilesJson : undefined
       });
 
       const augmented = await augmentStreamWithPlayback(newStream, req);
@@ -2225,10 +2280,33 @@ segment3.ts
   });
 
   app.put('/api/streams/:id', authenticateToken, requireStreamOwnership, async (req: any, res) => {
+    const isAdmin = req.user.role === 'admin';
     const { 
-      resolution, width, height, fps, bitrate, videoCodec, audioCodec,
-      gopSize, bufferSize, maxBitrate, audioVolume, audioSampleRate, audioDelay
+      resolution, enabledProfiles, profilesJson, width, height, fps, bitrate, videoCodec, audioCodec,
+      gopSize, bufferSize, maxBitrate, audioVolume, audioSampleRate, audioDelay, preset, profile
     } = req.body;
+    
+    // Strict Role Enforcement: Non-admins cannot modify resolution profiles
+    if (!isAdmin) {
+      const isAttemptingResolutionChange = 
+        resolution !== undefined || 
+        enabledProfiles !== undefined || 
+        profilesJson !== undefined || 
+        width !== undefined || 
+        height !== undefined || 
+        fps !== undefined || 
+        bitrate !== undefined || 
+        videoCodec !== undefined || 
+        preset !== undefined || 
+        profile !== undefined || 
+        gopSize !== undefined || 
+        bufferSize !== undefined || 
+        maxBitrate !== undefined;
+
+      if (isAttemptingResolutionChange) {
+        return res.status(403).json({ error: 'Access denied: Resolution settings and streaming profiles can only be modified by Administrators.' });
+      }
+    }
     
     // Validation for resolution and advanced settings
     if (resolution === 'Custom Resolution') {
@@ -2338,7 +2416,10 @@ segment3.ts
     }
   });
 
-  app.delete('/api/streams/:streamId/profiles/:profileId', authenticateToken, requireStreamOwnership, async (req, res) => {
+  app.delete('/api/streams/:streamId/profiles/:profileId', authenticateToken, requireStreamOwnership, async (req: any, res) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied: Only Administrators can delete streaming resolution profiles.' });
+    }
     try {
       const { streamId, profileId } = req.params;
       console.log(`[Streaming Engine] Received request to delete profile ${profileId} from stream ${streamId}`);

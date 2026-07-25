@@ -48,6 +48,7 @@ import {
   Activity,
   Headphones,
   ChevronDown,
+  ChevronUp,
   Sliders,
   Info
 } from 'lucide-react';
@@ -61,6 +62,18 @@ import { SetupWizard } from './components/SetupWizard';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
+
+export interface CustomOutputProfile {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  videoBitrate: string;
+  audioBitrate: string;
+  fps: number;
+  gopSize: number;
+  preset: string;
+}
 
 const safeParseJson = async (res: Response) => {
   const contentType = res.headers.get('content-type');
@@ -159,6 +172,74 @@ const App: React.FC = () => {
   });
 
   const [manualSelectedResolutions, setManualSelectedResolutions] = useState<string[]>(['Original', '1080p', '720p', '480p', '360p']);
+  const [manualProfiles, setManualProfiles] = useState<CustomOutputProfile[]>([
+    {
+      id: 'out_1',
+      name: 'Output 1',
+      width: 1920,
+      height: 1080,
+      videoBitrate: '4500k',
+      audioBitrate: '192k',
+      fps: 30,
+      gopSize: 60,
+      preset: 'superfast'
+    },
+    {
+      id: 'out_2',
+      name: 'Output 2',
+      width: 1280,
+      height: 720,
+      videoBitrate: '2500k',
+      audioBitrate: '128k',
+      fps: 30,
+      gopSize: 60,
+      preset: 'superfast'
+    }
+  ]);
+
+  const handleAddOutputProfile = () => {
+    const nextNum = manualProfiles.length + 1;
+    const newProf: CustomOutputProfile = {
+      id: 'out_' + Date.now() + Math.random().toString(36).substring(2, 6),
+      name: `Output ${nextNum}`,
+      width: 1280,
+      height: 720,
+      videoBitrate: '2500k',
+      audioBitrate: '128k',
+      fps: 30,
+      gopSize: 60,
+      preset: 'superfast'
+    };
+    setManualProfiles(prev => [...prev, newProf]);
+  };
+
+  const handleRemoveOutputProfile = (index: number) => {
+    if (manualProfiles.length <= 1) {
+      alert('At least one output profile is required.');
+      return;
+    }
+    setManualProfiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleReorderOutputProfile = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === manualProfiles.length - 1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    setManualProfiles(prev => {
+      const list = [...prev];
+      const [moved] = list.splice(index, 1);
+      list.splice(targetIndex, 0, moved);
+      return list;
+    });
+  };
+
+  const handleUpdateOutputProfile = (index: number, field: keyof CustomOutputProfile, value: any) => {
+    setManualProfiles(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+  };
   const [isAudioSettingsExpanded, setIsAudioSettingsExpanded] = useState(false);
 
   // Auth States
@@ -712,10 +793,35 @@ CREATE TABLE IF NOT EXISTS streams (
     const scheduledStart = newStreamData.isScheduled ? `${newStreamData.scheduledDate}T${newStreamData.scheduledTime}:00` : undefined;
 
     let enabledProfilesStr = newStreamData.resolution;
+    let profilesJsonStr: string | undefined = undefined;
+
     if (newStreamData.resolution === 'Original') {
       enabledProfilesStr = 'Original';
     } else if (newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual') {
-      enabledProfilesStr = manualSelectedResolutions.join(',');
+      const formattedProfiles = manualProfiles.map(p => {
+        const vBit = parseInt(p.videoBitrate.replace(/k/gi, '')) || 2500;
+        const aBit = parseInt(p.audioBitrate.replace(/k/gi, '')) || 128;
+        return {
+          id: p.id,
+          name: p.name || `${p.width}x${p.height}`,
+          resolutionType: 'Custom Resolution',
+          width: Number(p.width) || 1280,
+          height: Number(p.height) || 720,
+          fps: Number(p.fps) || 30,
+          bitrate: vBit,
+          audioBitrate: aBit,
+          keyframeInterval: Number(p.gopSize) || 60,
+          gopSize: Number(p.gopSize) || 60,
+          encoderPreset: p.preset || 'superfast',
+          preset: p.preset || 'superfast',
+          videoCodec: 'H.264',
+          audioCodec: 'aac',
+          audioEnabled: true,
+          enabled: true
+        };
+      });
+      profilesJsonStr = JSON.stringify(formattedProfiles);
+      enabledProfilesStr = manualProfiles.map(p => p.name || `${p.width}x${p.height}`).join(',');
     }
 
     try {
@@ -729,6 +835,7 @@ CREATE TABLE IF NOT EXISTS streams (
           broadcaster: newStreamData.broadcaster,
           resolution: newStreamData.resolution,
           enabledProfiles: enabledProfilesStr,
+          profilesJson: profilesJsonStr,
           scheduledStart,
           audioCodec: newStreamData.audioCodec,
           audioBitrate: newStreamData.audioBitrate,
@@ -1493,176 +1600,302 @@ CREATE TABLE IF NOT EXISTS streams (
                   </div>
 
                   {/* Streaming Profile Section */}
-                  <div className="bg-zinc-950/80 border border-zinc-800/90 rounded-xl p-4 sm:p-5 space-y-4">
-                    <div className="flex items-center justify-between border-b border-zinc-800/60 pb-3">
-                      <div className="flex items-center gap-2">
-                        <Sliders className="w-4 h-4 text-blue-400" />
-                        <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">Streaming Profile</h3>
+                  {currentUser?.role === 'admin' ? (
+                    <div className="bg-zinc-950/80 border border-zinc-800/90 rounded-xl p-4 sm:p-5 space-y-4">
+                      <div className="flex items-center justify-between border-b border-zinc-800/60 pb-3">
+                        <div className="flex items-center gap-2">
+                          <Sliders className="w-4 h-4 text-blue-400" />
+                          <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">Streaming Profile</h3>
+                        </div>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          Multi-Channel Production Ready
+                        </span>
                       </div>
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                        Multi-Channel Production Ready
-                      </span>
-                    </div>
 
-                    {/* Resolution Mode Selection */}
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">Resolution Mode</label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label 
-                          onClick={() => setNewStreamData(prev => ({ ...prev, resolution: 'Original' }))}
-                          className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
-                            newStreamData.resolution === 'Original'
-                              ? 'bg-blue-950/40 border-blue-500/80 text-white shadow-sm ring-1 ring-blue-500/30'
-                              : 'bg-zinc-900/60 border-zinc-800/80 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-                          }`}
-                        >
-                          <input 
-                            type="radio" 
-                            name="resolutionMode" 
-                            checked={newStreamData.resolution === 'Original'}
-                            onChange={() => setNewStreamData(prev => ({ ...prev, resolution: 'Original' }))}
-                            className="mt-0.5 text-blue-600 focus:ring-blue-500 accent-blue-500"
-                          />
-                          <div className="space-y-0.5">
-                            <span className="text-xs font-bold block text-zinc-100">○ Original (Source Passthrough)</span>
-                            <p className="text-[11px] text-zinc-400 leading-normal">
-                              Preserves incoming stream resolution without rescaling. Lowest CPU overhead; ideal for multi-channel density.
-                            </p>
-                          </div>
-                        </label>
+                      {/* Resolution Mode Selection */}
+                      <div className="space-y-2">
+                        <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">Resolution Mode</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <label 
+                            onClick={() => setNewStreamData(prev => ({ ...prev, resolution: 'Original' }))}
+                            className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                              newStreamData.resolution === 'Original'
+                                ? 'bg-blue-950/40 border-blue-500/80 text-white shadow-sm ring-1 ring-blue-500/30'
+                                : 'bg-zinc-900/60 border-zinc-800/80 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                            }`}
+                          >
+                            <input 
+                              type="radio" 
+                              name="resolutionMode" 
+                              checked={newStreamData.resolution === 'Original'}
+                              onChange={() => setNewStreamData(prev => ({ ...prev, resolution: 'Original' }))}
+                              className="mt-0.5 text-blue-600 focus:ring-blue-500 accent-blue-500"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-bold block text-zinc-100">○ Original (Source Passthrough)</span>
+                              <p className="text-[11px] text-zinc-400 leading-normal">
+                                Preserves incoming stream resolution without rescaling. Lowest CPU overhead; ideal for multi-channel density.
+                              </p>
+                            </div>
+                          </label>
 
-                        <label 
-                          onClick={() => setNewStreamData(prev => ({ ...prev, resolution: 'Custom (Manual)' }))}
-                          className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
-                            newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual'
-                              ? 'bg-blue-950/40 border-blue-500/80 text-white shadow-sm ring-1 ring-blue-500/30'
-                              : 'bg-zinc-900/60 border-zinc-800/80 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-                          }`}
-                        >
-                          <input 
-                            type="radio" 
-                            name="resolutionMode" 
-                            checked={newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual'}
-                            onChange={() => setNewStreamData(prev => ({ ...prev, resolution: 'Custom (Manual)' }))}
-                            className="mt-0.5 text-blue-600 focus:ring-blue-500 accent-blue-500"
-                          />
-                          <div className="space-y-0.5">
-                            <span className="text-xs font-bold block text-zinc-100">○ Manual Transcode Selection</span>
-                            <p className="text-[11px] text-zinc-400 leading-normal">
-                              Select specific output variants to transcode and publish in master.m3u8 adaptive manifest.
-                            </p>
-                          </div>
-                        </label>
+                          <label 
+                            onClick={() => setNewStreamData(prev => ({ ...prev, resolution: 'Custom (Manual)' }))}
+                            className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                              newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual'
+                                ? 'bg-blue-950/40 border-blue-500/80 text-white shadow-sm ring-1 ring-blue-500/30'
+                                : 'bg-zinc-900/60 border-zinc-800/80 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                            }`}
+                          >
+                            <input 
+                              type="radio" 
+                              name="resolutionMode" 
+                              checked={newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual'}
+                              onChange={() => setNewStreamData(prev => ({ ...prev, resolution: 'Custom (Manual)' }))}
+                              className="mt-0.5 text-blue-600 focus:ring-blue-500 accent-blue-500"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-bold block text-zinc-100">○ Manual Transcode Selection</span>
+                              <p className="text-[11px] text-zinc-400 leading-normal">
+                                Select specific output variants to transcode and publish in master.m3u8 adaptive manifest.
+                              </p>
+                            </div>
+                          </label>
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Manual Mode Checkboxes */}
-                    {(newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual') && (
-                      <div className="space-y-2 pt-1 animate-in fade-in duration-200">
-                        <label className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider block">
-                          Select Output Variants
-                        </label>
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                          {[
-                            { id: 'Original', label: 'Original', sub: 'Source Res' },
-                            { id: '1080p', label: '1080p', sub: '1920×1080' },
-                            { id: '720p', label: '720p', sub: '1280×720' },
-                            { id: '480p', label: '480p', sub: '854×480' },
-                            { id: '360p', label: '360p', sub: '640×360' }
-                          ].map((resItem) => {
-                            const isSelected = manualSelectedResolutions.includes(resItem.id);
-                            return (
-                              <label
-                                key={resItem.id}
-                                className={`flex items-center justify-between p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
-                                  isSelected
-                                    ? 'bg-blue-600/20 border-blue-500/80 text-blue-200 shadow-sm'
-                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-300'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <input 
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={() => {
-                                      setManualSelectedResolutions(prev => {
-                                        if (prev.includes(resItem.id)) {
-                                          if (prev.length === 1) return prev; // Keep at least one variant
-                                          return prev.filter(r => r !== resItem.id);
-                                        } else {
-                                          return [...prev, resItem.id];
-                                        }
-                                      });
-                                    }}
-                                    className="rounded border-zinc-700 text-blue-600 focus:ring-blue-500 accent-blue-500"
-                                  />
-                                  <div>
-                                    <span className="block text-xs font-bold">{resItem.label}</span>
-                                    <span className="text-[9px] text-zinc-500 font-normal">{resItem.sub}</span>
+                      {/* Advanced Manual Resolution Editor */}
+                      {(newStreamData.resolution === 'Custom (Manual)' || newStreamData.resolution === 'Manual') && (
+                        <div className="space-y-3 pt-1 animate-in fade-in duration-200">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <label className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider block">
+                                Advanced Custom Output Profiles
+                              </label>
+                              <p className="text-[11px] text-zinc-400">
+                                Configure output profiles for FFmpeg transcoding pipeline and master.m3u8 adaptive manifest.
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Profile cards list */}
+                          <div className="space-y-3">
+                            {manualProfiles.map((p, idx) => (
+                              <div key={p.id || idx} className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-3 relative shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-mono font-bold text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+                                      #{idx + 1}
+                                    </span>
+                                    <input 
+                                      type="text" 
+                                      value={p.name}
+                                      placeholder={`Output ${idx + 1}`}
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'name', e.target.value)}
+                                      className="bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1 text-xs font-bold text-blue-400 focus:outline-none focus:border-blue-500 w-36"
+                                    />
+                                    <span className="text-[10px] font-mono text-zinc-400">
+                                      ({p.width}×{p.height} @ {p.fps}fps)
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5">
+                                    {/* Reorder Up */}
+                                    <button
+                                      type="button"
+                                      disabled={idx === 0}
+                                      onClick={() => handleReorderOutputProfile(idx, 'up')}
+                                      className="p-1.5 text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                      title="Reorder Up"
+                                    >
+                                      <ChevronUp className="w-3.5 h-3.5" />
+                                    </button>
+                                    {/* Reorder Down */}
+                                    <button
+                                      type="button"
+                                      disabled={idx === manualProfiles.length - 1}
+                                      onClick={() => handleReorderOutputProfile(idx, 'down')}
+                                      className="p-1.5 text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                      title="Reorder Down"
+                                    >
+                                      <ChevronDown className="w-3.5 h-3.5" />
+                                    </button>
+                                    {/* Remove Output */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveOutputProfile(idx)}
+                                      className="ml-2 px-2.5 py-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 rounded transition-colors flex items-center gap-1 text-[11px] font-bold"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      Remove Output
+                                    </button>
                                   </div>
                                 </div>
-                                {isSelected && <Check className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
-                              </label>
-                            );
-                          })}
+
+                                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">Width</label>
+                                    <input 
+                                      type="number" 
+                                      value={p.width}
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'width', Number(e.target.value))}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">Height</label>
+                                    <input 
+                                      type="number" 
+                                      value={p.height}
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'height', Number(e.target.value))}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">Video Bitrate</label>
+                                    <input 
+                                      type="text" 
+                                      value={p.videoBitrate}
+                                      placeholder="4500k"
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'videoBitrate', e.target.value)}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">Audio Bitrate</label>
+                                    <input 
+                                      type="text" 
+                                      value={p.audioBitrate}
+                                      placeholder="192k"
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'audioBitrate', e.target.value)}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">FPS</label>
+                                    <input 
+                                      type="number" 
+                                      value={p.fps}
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'fps', Number(e.target.value))}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">GOP</label>
+                                    <input 
+                                      type="number" 
+                                      value={p.gopSize}
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'gopSize', Number(e.target.value))}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-zinc-400 uppercase block">Preset</label>
+                                    <select 
+                                      value={p.preset}
+                                      onChange={(e) => handleUpdateOutputProfile(idx, 'preset', e.target.value)}
+                                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-100 focus:border-blue-500 outline-none cursor-pointer"
+                                    >
+                                      <option value="ultrafast">ultrafast</option>
+                                      <option value="superfast">superfast</option>
+                                      <option value="veryfast">veryfast</option>
+                                      <option value="faster">faster</option>
+                                      <option value="fast">fast</option>
+                                      <option value="medium">medium</option>
+                                      <option value="slow">slow</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              onClick={handleAddOutputProfile}
+                              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition-colors flex items-center gap-1.5 uppercase tracking-wider shadow-sm"
+                            >
+                              <Plus className="w-4 h-4" /> Add Output
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Estimated CPU Usage Indicator */}
+                      {(() => {
+                        const activeVariantCount = newStreamData.resolution === 'Original' ? 1 : manualProfiles.length;
+                        let cpuLevel: 'low' | 'medium' | 'high' = 'low';
+                        let cpuBadge = '🟢 Low Impact';
+                        let cpuColorClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+                        let barColorClass = 'bg-emerald-500';
+                        let percentWidth = '25%';
+                        let explanation = 'Minimal CPU overhead. Highly efficient for up to 10+ concurrent channels.';
+
+                        if (activeVariantCount === 2 || activeVariantCount === 3) {
+                          cpuLevel = 'medium';
+                          cpuBadge = '🟡 Medium Impact';
+                          cpuColorClass = 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+                          barColorClass = 'bg-amber-500';
+                          percentWidth = '55%';
+                          explanation = 'Balanced CPU consumption. Supports 5-8 concurrent live streams on a 2-4 vCPU VPS.';
+                        } else if (activeVariantCount >= 4) {
+                          cpuLevel = 'high';
+                          cpuBadge = '🔴 High Impact';
+                          cpuColorClass = 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+                          barColorClass = 'bg-rose-500';
+                          percentWidth = '90%';
+                          explanation = 'Heavy multi-variant transcoding load. Best suited for high-spec VPS nodes (8+ vCPUs).';
+                        }
+
+                        return (
+                          <div className="p-3 bg-zinc-900/80 border border-zinc-800/80 rounded-xl space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-bold text-zinc-300 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                                <Activity className="w-3.5 h-3.5 text-blue-400" />
+                                Estimated CPU Usage
+                              </span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${cpuColorClass}`}>
+                                {cpuBadge}
+                              </span>
+                            </div>
+                            
+                            {/* Progress Meter Bar */}
+                            <div className="w-full bg-zinc-950 h-2 rounded-full overflow-hidden border border-zinc-800/80">
+                              <div 
+                                className={`h-full transition-all duration-300 ${barColorClass}`}
+                                style={{ width: percentWidth }}
+                              />
+                            </div>
+
+                            <div className="flex justify-between items-center text-[10px] text-zinc-400 pt-0.5">
+                              <span>Selected Variants: <strong className="text-white">{activeVariantCount} output{activeVariantCount > 1 ? 's' : ''}</strong></span>
+                              <span className="text-zinc-500">{explanation}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="bg-zinc-950/80 border border-zinc-800/90 rounded-xl p-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Sliders className="w-4 h-4 text-zinc-500" />
+                        <div>
+                          <span className="text-xs font-bold text-zinc-200 block">Streaming Profile</span>
+                          <span className="text-[11px] text-zinc-400">Default profile configured automatically by Administrator</span>
                         </div>
                       </div>
-                    )}
-
-                    {/* Estimated CPU Usage Indicator */}
-                    {(() => {
-                      const activeVariantCount = newStreamData.resolution === 'Original' ? 1 : manualSelectedResolutions.length;
-                      let cpuLevel: 'low' | 'medium' | 'high' = 'low';
-                      let cpuBadge = '🟢 Low Impact';
-                      let cpuColorClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
-                      let barColorClass = 'bg-emerald-500';
-                      let percentWidth = '25%';
-                      let explanation = 'Minimal CPU overhead. Highly efficient for up to 10+ concurrent channels.';
-
-                      if (activeVariantCount === 2 || activeVariantCount === 3) {
-                        cpuLevel = 'medium';
-                        cpuBadge = '🟡 Medium Impact';
-                        cpuColorClass = 'bg-amber-500/10 text-amber-400 border-amber-500/30';
-                        barColorClass = 'bg-amber-500';
-                        percentWidth = '55%';
-                        explanation = 'Balanced CPU consumption. Supports 5-8 concurrent live streams on a 2-4 vCPU VPS.';
-                      } else if (activeVariantCount >= 4) {
-                        cpuLevel = 'high';
-                        cpuBadge = '🔴 High Impact';
-                        cpuColorClass = 'bg-rose-500/10 text-rose-400 border-rose-500/30';
-                        barColorClass = 'bg-rose-500';
-                        percentWidth = '90%';
-                        explanation = 'Heavy multi-variant transcoding load. Best suited for high-spec VPS nodes (8+ vCPUs).';
-                      }
-
-                      return (
-                        <div className="p-3 bg-zinc-900/80 border border-zinc-800/80 rounded-xl space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-zinc-300 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                              <Activity className="w-3.5 h-3.5 text-blue-400" />
-                              Estimated CPU Usage
-                            </span>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${cpuColorClass}`}>
-                              {cpuBadge}
-                            </span>
-                          </div>
-                          
-                          {/* Progress Meter Bar */}
-                          <div className="w-full bg-zinc-950 h-2 rounded-full overflow-hidden border border-zinc-800/80">
-                            <div 
-                              className={`h-full transition-all duration-300 ${barColorClass}`}
-                              style={{ width: percentWidth }}
-                            />
-                          </div>
-
-                          <div className="flex justify-between items-center text-[10px] text-zinc-400 pt-0.5">
-                            <span>Selected Variants: <strong className="text-white">{activeVariantCount} output{activeVariantCount > 1 ? 's' : ''}</strong></span>
-                            <span className="text-zinc-500">{explanation}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
+                      <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        🔒 Admin Enforced
+                      </span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                     <div className="space-y-1.5">
