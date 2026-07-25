@@ -370,11 +370,30 @@ async function startServer() {
     profilesJson?: string,
     customData?: any
   ): any[] => {
+    // 1. Original Mode: No transcoding, preserve incoming stream parameters with minimal CPU usage
+    if (resolution === 'Original' || resolution === 'Source (Original)') {
+      return [{
+        id: 'original',
+        enabled: true,
+        name: 'Original',
+        resolutionType: 'Original',
+        width: 0,
+        height: 0,
+        fps: 0,
+        bitrate: 0,
+        videoCodec: 'copy',
+        audioCodec: 'copy',
+        encoderPreset: 'superfast',
+        audioEnabled: true,
+        audioBitrate: 0
+      }];
+    }
+
     let parsed: any[] = [];
     if (profilesJson) {
       try {
         const parsedRaw = JSON.parse(profilesJson);
-        if (Array.isArray(parsedRaw)) {
+        if (Array.isArray(parsedRaw) && parsedRaw.length > 0) {
           parsed = parsedRaw;
         }
       } catch (e) {
@@ -382,6 +401,7 @@ async function startServer() {
       }
     }
 
+    // 2. Manual Mode with Custom Output Profiles JSON
     if (parsed.length > 0) {
       return parsed
         .filter((p: any) => p.enabled !== false)
@@ -390,8 +410,8 @@ async function startServer() {
           const aBit = parseInt(String(p.audioBitrate || 128).replace(/k/gi, '')) || 128;
           const gop = p.keyframeInterval !== undefined ? Number(p.keyframeInterval) : (p.gopSize !== undefined ? Number(p.gopSize) : 60);
           const preset = p.encoderPreset || p.preset || 'superfast';
-          const w = Number(p.width) || 1280;
-          const h = Number(p.height) || 720;
+          const w = (Number(p.width) || 1280) & ~1; // Ensure even dimensions for H.264
+          const h = (Number(p.height) || 720) & ~1;
           const name = p.name || (w && h ? `${w}x${h}` : `Output ${idx + 1}`);
 
           return {
@@ -432,10 +452,8 @@ async function startServer() {
     }
 
     if (activeProfiles.length === 0) {
-      if (resolution === 'Original' || resolution === 'Source (Original)') {
-        activeProfiles = ['Original'];
-      } else if (resolution === 'Custom (Manual)' || resolution === 'Manual') {
-        activeProfiles = ['Original', '1080p', '720p', '480p', '360p'];
+      if (resolution === 'Custom (Manual)' || resolution === 'Manual') {
+        activeProfiles = ['1080p', '720p', '480p'];
       } else if (resolution) {
         const cleanRes = resolution.replace(/ \(.*/, '').trim();
         activeProfiles = [cleanRes];
@@ -446,28 +464,33 @@ async function startServer() {
 
     return activeProfiles.map(pName => {
       const presetSpec = getResolutionPreset(pName, customData);
+      const w = (Number(presetSpec.width) || 1280) & ~1;
+      const h = (Number(presetSpec.height) || 720) & ~1;
+      const vBit = parseInt(presetSpec.videoBitrate) || 2500;
+      const aBit = parseInt(presetSpec.audioBitrate) || 128;
+
       return {
         id: pName,
         enabled: true,
         name: pName,
         resolutionType: pName,
-        width: presetSpec.width,
-        height: presetSpec.height,
-        fps: presetSpec.fps,
-        videoCodec: presetSpec.videoCodec === 'libx264' || presetSpec.videoCodec === 'H.264' ? 'H.264' :
-                    presetSpec.videoCodec === 'libx265' || presetSpec.videoCodec === 'H.265' ? 'H.265' :
+        width: w,
+        height: h,
+        fps: presetSpec.fps || 30,
+        videoCodec: presetSpec.videoCodec === 'libx265' || presetSpec.videoCodec === 'H.265' ? 'H.265' :
                     presetSpec.videoCodec === 'libsvtav1' || presetSpec.videoCodec === 'AV1' ? 'AV1' : 'H.264',
-        bitrate: parseInt(presetSpec.videoBitrate) || 2500,
+        bitrate: vBit,
         encoderPreset: presetSpec.preset || 'superfast',
         profile: presetSpec.profile || 'main',
         pixelFormat: presetSpec.pixelFormat || 'yuv420p',
         keyframeInterval: presetSpec.gopSize || 60,
-        maxBitrate: presetSpec.maxBitrate || Math.round((parseInt(presetSpec.videoBitrate) || 2500) * 1.15),
-        bufferSize: presetSpec.bufferSize || Math.round((parseInt(presetSpec.videoBitrate) || 2500) * 1.6),
+        gopSize: presetSpec.gopSize || 60,
+        maxBitrate: presetSpec.maxBitrate || Math.round(vBit * 1.15),
+        bufferSize: presetSpec.bufferSize || Math.round(vBit * 1.6),
         scalingAlgorithm: presetSpec.scalingAlgorithm || 'bicubic',
         audioEnabled: presetSpec.audioEnabled !== false,
         audioCodec: presetSpec.audioCodec || 'aac',
-        audioBitrate: parseInt(presetSpec.audioBitrate) || 128,
+        audioBitrate: aBit,
         audioSampleRate: presetSpec.audioSampleRate || 44100,
         audioChannels: presetSpec.audioChannels || 'stereo',
         audioVolume: presetSpec.audioVolume || 100,
@@ -476,31 +499,50 @@ async function startServer() {
     });
   };
 
-  const generateFfmpegArguments = (finalActiveProfiles: any[], hlsDir: string): string[] => {
+  const generateFfmpegArguments = (finalActiveProfiles: any[], hlsDir: string, rtmpInputUrl?: string): string[] => {
     const ffmpegArgs: string[] = ['-re'];
     if (finalActiveProfiles.length === 0) {
       return ffmpegArgs;
     }
 
-    const rate = finalActiveProfiles[0]?.fps || 30;
-    ffmpegArgs.push('-f', 'lavfi', '-i', `testsrc=size=1920x1080:rate=${rate}`);
-    ffmpegArgs.push('-f', 'lavfi', '-i', 'sine=frequency=440');
+    // Determine input source: live RTMP stream or fallback synthetic testsrc
+    if (rtmpInputUrl) {
+      ffmpegArgs.push('-i', rtmpInputUrl);
+    } else {
+      const rate = finalActiveProfiles[0]?.fps || 30;
+      ffmpegArgs.push('-f', 'lavfi', '-i', `testsrc=size=1920x1080:rate=${rate}`);
+      ffmpegArgs.push('-f', 'lavfi', '-i', 'sine=frequency=440');
+    }
 
     finalActiveProfiles.forEach((p) => {
       const safeName = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      
-      if (p.width > 0) {
-        ffmpegArgs.push('-map', '0:v');
-      }
+      const isOriginalMode = p.resolutionType === 'Original' || p.name === 'Original' || p.videoCodec === 'copy';
+
+      ffmpegArgs.push('-map', '0:v?');
       if (p.audioEnabled !== false) {
-        ffmpegArgs.push('-map', '1:a');
+        ffmpegArgs.push('-map', '0:a?');
       }
 
-      if (p.width > 0) {
-        let videoFilter = `drawtext=text='StreamPulse Transcoder [${p.name}] - %{localtime\\:%Y-%m-%d %H\\\\\\:%M\\\\\\:%S}':x=40:y=40:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.6`;
-        const scalingFlags = p.scalingAlgorithm ? `:flags=${p.scalingAlgorithm}` : '';
-        videoFilter += `,scale=${p.width}:${p.height}${scalingFlags}`;
-        ffmpegArgs.push('-vf', videoFilter);
+      if (isOriginalMode && rtmpInputUrl) {
+        // Original mode with live RTMP input: Stream Copy (-c:v copy -c:a copy) for zero CPU transcoding cost
+        ffmpegArgs.push('-c:v', 'copy');
+        if (p.audioEnabled !== false) {
+          ffmpegArgs.push('-c:a', 'copy');
+        } else {
+          ffmpegArgs.push('-an');
+        }
+      } else {
+        // Transcoded Mode or Synthetic Input Mode
+        if (p.width > 0 && p.height > 0) {
+          const safeW = (Number(p.width) || 1280) & ~1;
+          const safeH = (Number(p.height) || 720) & ~1;
+          const scalingFlags = p.scalingAlgorithm ? `:flags=${p.scalingAlgorithm}` : '';
+          let videoFilter = `scale=${safeW}:${safeH}${scalingFlags}`;
+          if (!rtmpInputUrl) {
+            videoFilter = `drawtext=text='StreamPulse [${p.name}] %{localtime\\:%H\\\\\\:%M\\\\\\:%S}':x=30:y=30:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.6,` + videoFilter;
+          }
+          ffmpegArgs.push('-vf', videoFilter);
+        }
 
         if (p.fps > 0) {
           ffmpegArgs.push('-r', String(p.fps));
@@ -513,18 +555,18 @@ async function startServer() {
         const vBitrate = String(p.bitrate).endsWith('k') ? p.bitrate : `${p.bitrate}k`;
         ffmpegArgs.push('-b:v', vBitrate);
         
-        if (p.encoderPreset) {
-          ffmpegArgs.push('-preset', p.encoderPreset);
-        }
+        const preset = p.encoderPreset || p.preset || 'superfast';
+        ffmpegArgs.push('-preset', preset);
+
         if (p.profile && vcodec !== 'libsvtav1') {
-          ffmpegArgs.push('-profile:v', p.profile);
+          ffmpegArgs.push('-profile:v', p.profile || 'main');
         }
         if (p.pixelFormat) {
-          ffmpegArgs.push('-pix_fmt', p.pixelFormat);
+          ffmpegArgs.push('-pix_fmt', p.pixelFormat || 'yuv420p');
         }
         
-        const gop = p.keyframeInterval ? p.keyframeInterval : (p.fps || 30) * 2;
-        ffmpegArgs.push('-g', String(gop));
+        const gop = p.gopSize || p.keyframeInterval || (p.fps || 30) * 2;
+        ffmpegArgs.push('-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0');
 
         if (p.maxBitrate) {
           ffmpegArgs.push('-maxrate', `${p.maxBitrate}k`);
@@ -532,43 +574,41 @@ async function startServer() {
         if (p.bufferSize) {
           ffmpegArgs.push('-bufsize', `${p.bufferSize}k`);
         }
-      } else {
-        ffmpegArgs.push('-vn');
-      }
 
-      if (p.audioEnabled === false) {
-        ffmpegArgs.push('-an');
-      } else {
-        const acodec = p.audioCodec === 'opus' || p.audioCodec === 'libopus' ? 'libopus' :
-                       p.audioCodec === 'mp3' || p.audioCodec === 'libmp3lame' ? 'libmp3lame' : 'aac';
-        ffmpegArgs.push('-c:a', acodec);
-        
-        const aBitrate = String(p.audioBitrate).endsWith('k') ? p.audioBitrate : `${p.audioBitrate}k`;
-        ffmpegArgs.push('-b:a', aBitrate);
-        
-        if (p.audioSampleRate) {
-          ffmpegArgs.push('-ar', String(p.audioSampleRate));
-        }
-
-        if (p.audioChannels) {
-          const chanVal = p.audioChannels === 'mono' ? '1' : 
-                          p.audioChannels === 'stereo' ? '2' : 
-                          p.audioChannels === '5.1' ? '6' : 
-                          p.audioChannels === '7.1' ? '8' : '2';
-          ffmpegArgs.push('-ac', chanVal);
+        if (p.audioEnabled === false) {
+          ffmpegArgs.push('-an');
         } else {
-          ffmpegArgs.push('-ac', '2');
-        }
+          const acodec = p.audioCodec === 'opus' || p.audioCodec === 'libopus' ? 'libopus' :
+                         p.audioCodec === 'mp3' || p.audioCodec === 'libmp3lame' ? 'libmp3lame' : 'aac';
+          ffmpegArgs.push('-c:a', acodec);
+          
+          const aBitrate = String(p.audioBitrate).endsWith('k') ? p.audioBitrate : `${p.audioBitrate}k`;
+          ffmpegArgs.push('-b:a', aBitrate);
+          
+          if (p.audioSampleRate) {
+            ffmpegArgs.push('-ar', String(p.audioSampleRate));
+          }
 
-        const audioFilters: string[] = [];
-        if (p.audioVolume !== undefined && p.audioVolume !== 100) {
-          audioFilters.push(`volume=${p.audioVolume / 100}`);
-        }
-        if (p.audioNormalize === true) {
-          audioFilters.push('loudnorm');
-        }
-        if (audioFilters.length > 0) {
-          ffmpegArgs.push('-af', audioFilters.join(','));
+          if (p.audioChannels) {
+            const chanVal = p.audioChannels === 'mono' ? '1' : 
+                            p.audioChannels === 'stereo' ? '2' : 
+                            p.audioChannels === '5.1' ? '6' : 
+                            p.audioChannels === '7.1' ? '8' : '2';
+            ffmpegArgs.push('-ac', chanVal);
+          } else {
+            ffmpegArgs.push('-ac', '2');
+          }
+
+          const audioFilters: string[] = [];
+          if (p.audioVolume !== undefined && p.audioVolume !== 100) {
+            audioFilters.push(`volume=${p.audioVolume / 100}`);
+          }
+          if (p.audioNormalize === true) {
+            audioFilters.push('loudnorm');
+          }
+          if (audioFilters.length > 0) {
+            ffmpegArgs.push('-af', audioFilters.join(','));
+          }
         }
       }
 
@@ -576,7 +616,7 @@ async function startServer() {
         '-f', 'hls',
         '-hls_time', '4',
         '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments',
+        '-hls_flags', 'delete_segments+append_list+omit_endlist',
         '-master_pl_name', 'master.m3u8',
         '-hls_segment_filename', path.join(hlsDir, safeName, 'file%03d.ts'),
         path.join(hlsDir, safeName, 'index.m3u8')
@@ -742,7 +782,9 @@ segment3.ts
       if (hasFfmpeg) {
         console.log(`[Streaming Engine] Spawning active FFmpeg background transcode process...`);
         
-        const ffmpegArgs = generateFfmpegArguments(finalActiveProfiles, hlsDir);
+        const rtmpPort = serverSettings.streaming?.rtmpPort || 1935;
+        const rtmpInputUrl = `rtmp://127.0.0.1:${rtmpPort}/live/${streamKey}`;
+        const ffmpegArgs = generateFfmpegArguments(finalActiveProfiles, hlsDir, rtmpInputUrl);
 
         console.log(`[Streaming Engine] FFmpeg generated args: ffmpeg ${ffmpegArgs.join(' ')}`);
 

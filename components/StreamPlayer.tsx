@@ -1016,9 +1016,22 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
           if (!active) return;
           const Hls = (window as any).Hls;
           if (Hls && Hls.isSupported()) {
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
             const hls = new Hls({
               enableWorker: true,
               lowLatencyMode: true,
+              // Mobile buffer optimization: prevent memory exhaustion and eliminate mobile buffering stalls
+              maxBufferLength: isMobile ? 10 : 30,
+              maxMaxBufferLength: isMobile ? 20 : 60,
+              maxBufferSize: isMobile ? 30 * 1024 * 1024 : 60 * 1024 * 1024,
+              maxBufferHole: 0.5,
+              highBufferWatchdogPeriod: 2,
+              nudgeOffset: 0.1,
+              nudgeMaxRetry: 5,
+              liveSyncDurationCount: 3,
+              liveMaxLatencyDurationCount: 10,
+              capLevelToPlayerSize: isMobile, // Adapt quality to mobile screen viewport size
               manifestLoadingMaxRetry: 20,
               manifestLoadingRetryDelay: 1000,
               manifestLoadingMaxRetryTimeout: 60000,
@@ -1031,34 +1044,58 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             hls.attachMedia(video);
             hlsInstanceRef.current = hls;
 
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            hls.on(Hls.Events.MANIFEST_PARSED, (event: any, data: any) => {
               if (!active) return;
+              
+              // Default playback quality = AUTO (ABR)
+              hls.currentLevel = -1;
+
+              // On mobile devices, choose initial start level <= 720p to guarantee fast startup without buffering
+              if (isMobile && data.levels && data.levels.length > 1) {
+                const defaultMobileIdx = data.levels.findIndex((l: any) => l.height && l.height <= 720 && l.height >= 480);
+                if (defaultMobileIdx !== -1) {
+                  hls.startLevel = defaultMobileIdx;
+                }
+              }
+
               video.play().catch(e => console.log('Autoplay blocked, attempting muted play:', e));
-              const levels = hls.levels.map((l: any) => `${l.height}p`);
-              setQualityLevels(['Auto', ...levels]);
+
+              // Parse available variant streams from master playlist for quality selector
+              const levels = data.levels.map((l: any) => {
+                if (l.height && l.height > 0) {
+                  return `${l.height}p`;
+                }
+                return 'Original';
+              });
+              const uniqueLevels = Array.from(new Set(levels));
+              setQualityLevels(['Auto', ...uniqueLevels]);
             });
 
             hls.on(Hls.Events.ERROR, (event: any, data: any) => {
               if (data.fatal) {
                 switch (data.type) {
                   case Hls.ErrorTypes.NETWORK_ERROR:
+                    console.warn('[HLS Engine] Network error encountered, retrying stream load...');
                     if (retryTimer) clearTimeout(retryTimer);
                     retryTimer = setTimeout(() => {
                       if (active && hlsInstanceRef.current) {
                         hlsInstanceRef.current.startLoad();
                       }
-                    }, 1500);
+                    }, 1000);
                     break;
                   case Hls.ErrorTypes.MEDIA_ERROR:
+                    console.warn('[HLS Engine] Media error encountered, recovering playback...');
                     hls.recoverMediaError();
                     break;
                   default:
+                    console.error('[HLS Engine] Fatal player error, re-attaching media source...');
                     if (retryTimer) clearTimeout(retryTimer);
                     retryTimer = setTimeout(() => {
                       if (active && hlsInstanceRef.current) {
                         hlsInstanceRef.current.loadSource(hlsUrl);
+                        hlsInstanceRef.current.attachMedia(video);
                       }
-                    }, 2000);
+                    }, 1500);
                     break;
                 }
               }
@@ -1129,6 +1166,9 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       const hls = hlsInstanceRef.current;
       if (quality === 'Auto') {
         hls.currentLevel = -1;
+      } else if (quality === 'Original') {
+        const origIdx = hls.levels.findIndex((l: any) => !l.height || l.height === 0);
+        hls.currentLevel = origIdx !== -1 ? origIdx : -1;
       } else {
         const height = parseInt(quality);
         const idx = hls.levels.findIndex((l: any) => l.height === height);
