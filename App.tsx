@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { CopyButton } from './components/CopyButton';
+import { ToastContainer } from './components/ToastContainer';
+import { copyToClipboard } from './utils/clipboard';
 import { 
   LayoutDashboard, 
   PlusCircle, 
@@ -1311,8 +1314,7 @@ CREATE TABLE IF NOT EXISTS streams (
   // Delete recording handler removed
 
   const copyConfigToClipboard = (txt: string) => {
-    navigator.clipboard.writeText(txt);
-    alert('Configuration code copied to clipboard!');
+    copyToClipboard(txt);
   };
 
   const downloadAllConfigs = () => {
@@ -2559,20 +2561,13 @@ CREATE TABLE IF NOT EXISTS streams (
                         <span className="text-xs font-semibold text-zinc-300">Dashboard URL</span>
                         <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.dashboardUrl || 'Endpoint unavailable'}</p>
                       </div>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(networkDetails?.dashboardUrl || '');
-                          setCopiedUrlKey('dashboard');
-                          setTimeout(() => setCopiedUrlKey(null), 2000);
-                        }}
+                      <CopyButton
+                        text={networkDetails?.dashboardUrl || ''}
+                        label="Copy Link"
+                        copiedLabel="Copied!"
                         className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
-                      >
-                        {copiedUrlKey === 'dashboard' ? (
-                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
-                        ) : (
-                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
-                        )}
-                      </button>
+                        iconClassName="w-3.5 h-3.5"
+                      />
                     </div>
 
                     {/* API URL */}
@@ -2581,20 +2576,13 @@ CREATE TABLE IF NOT EXISTS streams (
                         <span className="text-xs font-semibold text-zinc-300">API URL</span>
                         <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.apiUrl || 'Endpoint unavailable'}</p>
                       </div>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(networkDetails?.apiUrl || '');
-                          setCopiedUrlKey('api');
-                          setTimeout(() => setCopiedUrlKey(null), 2000);
-                        }}
+                      <CopyButton
+                        text={networkDetails?.apiUrl || ''}
+                        label="Copy Link"
+                        copiedLabel="Copied!"
                         className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
-                      >
-                        {copiedUrlKey === 'api' ? (
-                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
-                        ) : (
-                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
-                        )}
-                      </button>
+                        iconClassName="w-3.5 h-3.5"
+                      />
                     </div>
 
                     {/* RTMP URL */}
@@ -2606,20 +2594,13 @@ CREATE TABLE IF NOT EXISTS streams (
                         </div>
                         <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.rtmpUrl || 'Endpoint unavailable'}</p>
                       </div>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(networkDetails?.rtmpUrl || '');
-                          setCopiedUrlKey('rtmp');
-                          setTimeout(() => setCopiedUrlKey(null), 2000);
-                        }}
+                      <CopyButton
+                        text={networkDetails?.rtmpUrl || ''}
+                        label="Copy Link"
+                        copiedLabel="Copied!"
                         className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
-                      >
-                        {copiedUrlKey === 'rtmp' ? (
-                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
-                        ) : (
-                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
-                        )}
-                      </button>
+                        iconClassName="w-3.5 h-3.5"
+                      />
                     </div>
 
                     {/* HLS URL */}
@@ -2628,20 +2609,13 @@ CREATE TABLE IF NOT EXISTS streams (
                         <span className="text-xs font-semibold text-zinc-300">HLS Playback URL</span>
                         <p className="text-[11px] font-mono text-zinc-500 select-all truncate">{networkDetails?.hlsUrl || 'Endpoint unavailable'}</p>
                       </div>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(networkDetails?.hlsUrl || '');
-                          setCopiedUrlKey('hls');
-                          setTimeout(() => setCopiedUrlKey(null), 2000);
-                        }}
+                      <CopyButton
+                        text={networkDetails?.hlsUrl || ''}
+                        label="Copy Link"
+                        copiedLabel="Copied!"
                         className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-xs font-bold text-zinc-300 transition-all self-start sm:self-center"
-                      >
-                        {copiedUrlKey === 'hls' ? (
-                          <><Check className="w-3.5 h-3.5 text-green-500" /> Copied!</>
-                        ) : (
-                          <><Copy className="w-3.5 h-3.5" /> Copy Link</>
-                        )}
-                      </button>
+                        iconClassName="w-3.5 h-3.5"
+                      />
                     </div>
                   </div>
                 </div>
@@ -2698,12 +2672,12 @@ CREATE TABLE IF NOT EXISTS streams (
                   <pre className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 overflow-x-auto text-[11px] sm:text-xs font-mono text-zinc-300 max-h-[420px] scrollbar-thin">
                     {fileContents[selectedFileKey]}
                   </pre>
-                  <button 
-                    onClick={() => copyConfigToClipboard(fileContents[selectedFileKey])}
+                  <CopyButton 
+                    text={fileContents[selectedFileKey] || ''}
+                    label="Copy Code"
+                    copiedLabel="Copied!"
                     className="absolute top-3 right-3 px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-[10px] font-bold text-zinc-400 transition-colors"
-                  >
-                    Copy Code
-                  </button>
+                  />
                 </div>
               </div>
 
@@ -2894,6 +2868,7 @@ CREATE TABLE IF NOT EXISTS streams (
       <footer className="hidden sm:block border-t border-zinc-900 bg-zinc-950/50 py-8 px-8 text-center mt-auto">
         <p className="text-xs text-zinc-500">© 2026 StreamPulse Media Systems. Professional RTMP Distribution Hub.</p>
       </footer>
+      <ToastContainer />
     </div>
   );
 };

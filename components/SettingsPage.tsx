@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CopyButton } from './CopyButton';
 import { 
   RefreshCcw, 
   Save, 
@@ -713,18 +714,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <div className="text-[9px] font-bold text-zinc-500 uppercase">RTMP Ingest Address</div>
                       <div className="bg-zinc-900 border border-zinc-855 rounded-lg px-2.5 py-1.5 text-xs font-mono text-blue-400 truncate flex justify-between items-center">
                         <span>{networkDetails?.rtmpUrl || 'Endpoint unavailable'}</span>
-                        <button
-                          onClick={() => {
-                            if (networkDetails?.rtmpUrl) {
-                              navigator.clipboard.writeText(networkDetails.rtmpUrl);
-                              setCopiedUrlKey('rtmp');
-                              setTimeout(() => setCopiedUrlKey(null), 1500);
-                            }
-                          }}
+                        <CopyButton
+                          text={networkDetails?.rtmpUrl || ''}
                           className="text-zinc-500 hover:text-white transition"
-                        >
-                          {copiedUrlKey === 'rtmp' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
+                          iconClassName="w-3.5 h-3.5"
+                          showIconOnly={true}
+                        />
                       </div>
                     </div>
 

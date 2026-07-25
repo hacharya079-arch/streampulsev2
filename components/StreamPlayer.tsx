@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { copyToClipboard as copyToClipboardUtil } from '../utils/clipboard';
+import { CopyButton } from './CopyButton';
 import { 
   Play, 
   Pause,
@@ -829,7 +831,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     setCustomProfilesJson('[]');
   };
 
-  const handleCopyResolutionConfig = () => {
+  const handleCopyResolutionConfig = async () => {
     const configJson = JSON.stringify({
       resolution: selectedResolution,
       width: customWidth,
@@ -845,8 +847,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       pixelFormat: customPixelFormat,
       enabledProfiles: customEnabledProfiles
     }, null, 2);
-    navigator.clipboard.writeText(configJson);
-    alert('Resolution configuration JSON copied to clipboard!');
+    await copyToClipboardUtil(configJson);
   };
 
   const handleTestResolutionConfig = async () => {
@@ -1288,17 +1289,19 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     }
   }, [stream.status, stream.scheduledStart]);
 
-  const copyToClipboard = (text: string, type: 'url' | 'key' | 'rtmp' | 'hls' | 'dash' | 'embed' | 'vlc' | 'videojs' | 'p1080' | 'p720' | 'p480' | 'p360') => {
-    navigator.clipboard.writeText(text);
-    if (type === 'url') {
-      setCopiedUrl(true);
-      setTimeout(() => setCopiedUrl(false), 2000);
-    } else if (type === 'key') {
-      setCopiedKey(true);
-      setTimeout(() => setCopiedKey(false), 2000);
-    } else {
-      setCopiedPlayback(type);
-      setTimeout(() => setCopiedPlayback(null), 2000);
+  const copyToClipboard = async (text: string, type: 'url' | 'key' | 'rtmp' | 'hls' | 'dash' | 'embed' | 'vlc' | 'videojs' | 'p1080' | 'p720' | 'p480' | 'p360') => {
+    const success = await copyToClipboardUtil(text);
+    if (success) {
+      if (type === 'url') {
+        setCopiedUrl(true);
+        setTimeout(() => setCopiedUrl(false), 2000);
+      } else if (type === 'key') {
+        setCopiedKey(true);
+        setTimeout(() => setCopiedKey(false), 2000);
+      } else {
+        setCopiedPlayback(type);
+        setTimeout(() => setCopiedPlayback(null), 2000);
+      }
     }
   };
 
@@ -2141,17 +2144,17 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                      {isLocal ? 'LAN NODE' : 'GLOBAL'}
                    </span>
                 </div>
-                
                 <div className="space-y-2">
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-[10px] sm:text-[11px] bg-black/60 p-1.5 sm:p-2 rounded-lg border border-zinc-800/80 overflow-hidden">
                           <code className="text-blue-400 truncate mr-1.5 font-mono select-all flex-1">{stream.rtmpUrl}</code>
-                          <button 
-                            onClick={() => copyToClipboard(stream.rtmpUrl, 'url')} 
+                          <CopyButton
+                            text={stream.rtmpUrl}
                             className="text-zinc-500 hover:text-white bg-zinc-800/50 p-1.5 rounded-md shrink-0"
-                          >
-                            {copiedUrl ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500" /> : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
-                          </button>
+                            iconClassName="w-3 h-3 sm:w-3.5 sm:h-3.5"
+                            showIconOnly={true}
+                            title="Copy RTMP Ingest URL"
+                          />
                       </div>
                     </div>
 
@@ -2177,9 +2180,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                                 <button onClick={() => setShowStreamKey(!showStreamKey)} className="text-zinc-500 hover:text-white p-1" title="Toggle Visibility">
                                   {showStreamKey ? <EyeOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
                                 </button>
-                                <button onClick={() => copyToClipboard(stream.streamKey, 'key')} className="text-zinc-500 hover:text-white p-1" title="Copy Key">
-                                  {copiedKey ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500" /> : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
-                                </button>
+                                <CopyButton
+                                  text={stream.streamKey}
+                                  className="text-zinc-500 hover:text-white p-1"
+                                  iconClassName="w-3 h-3 sm:w-3.5 sm:h-3.5"
+                                  showIconOnly={true}
+                                  title="Copy Stream Key"
+                                />
                                 {isAdmin && onRegenerateKey && (
                                   <button onClick={() => setIsConfirmingRegen(true)} className="text-zinc-500 hover:text-amber-500 p-1 transition-colors" title="Regenerate Key">
                                     <RefreshCcw className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -3266,9 +3273,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                         <button onClick={() => toggleReveal('rtmp')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
                           {revealedPlaybacks.rtmp ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                         </button>
-                        <button onClick={() => copyToClipboard(rtmpPlayback, 'rtmp')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
-                          {copiedPlayback === 'rtmp' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                        <CopyButton
+                          text={rtmpPlayback}
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer"
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title="Copy RTMP Playback URL"
+                        />
                       </div>
                   </div>
                 </div>
@@ -3290,9 +3301,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                         <button onClick={() => toggleReveal('hls')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
                           {revealedPlaybacks.hls ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                         </button>
-                        <button onClick={() => copyToClipboard(hlsUrl, 'hls')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
-                          {copiedPlayback === 'hls' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                        <CopyButton
+                          text={hlsUrl}
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer"
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title="Copy HLS Playlist URL"
+                        />
                       </div>
                   </div>
                 </div>
@@ -3312,12 +3327,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                           <span className="text-[7px] font-bold bg-zinc-800 text-zinc-400 px-1 rounded uppercase shrink-0">{variant.key.slice(1)}</span>
                           <code className="text-zinc-400 truncate font-mono select-all flex-1">{variant.url}</code>
                         </div>
-                        <button 
-                          onClick={() => copyToClipboard(variant.url, variant.key as any)} 
+                        <CopyButton
+                          text={variant.url}
                           className="text-zinc-500 hover:text-white p-1 cursor-pointer shrink-0 animate-in"
-                        >
-                          {copiedPlayback === variant.key ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title={`Copy ${variant.label}`}
+                        />
                       </div>
                     ))}
                   </div>
@@ -3340,9 +3356,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                         <button onClick={() => toggleReveal('dash')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
                           {revealedPlaybacks.dash ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                         </button>
-                        <button onClick={() => copyToClipboard(dashUrl, 'dash')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
-                          {copiedPlayback === 'dash' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                        <CopyButton
+                          text={dashUrl}
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer"
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title="Copy MPEG-DASH Manifest URL"
+                        />
                       </div>
                   </div>
                 </div>
@@ -3361,9 +3381,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                         {`<iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" allowfullscreen></iframe>`}
                       </code>
                       <div className="flex items-center gap-1">
-                        <button onClick={() => copyToClipboard(`<iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" allowfullscreen></iframe>`, 'embed')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
-                          {copiedPlayback === 'embed' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                        <CopyButton
+                          text={`<iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" allowfullscreen></iframe>`}
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer"
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title="Copy iFrame Embed HTML"
+                        />
                       </div>
                   </div>
                 </div>
@@ -3382,9 +3406,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                         {hlsUrl}
                       </code>
                       <div className="flex items-center gap-1">
-                        <button onClick={() => copyToClipboard(hlsUrl, 'vlc')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
-                          {copiedPlayback === 'vlc' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                        <CopyButton
+                          text={hlsUrl}
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer"
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title="Copy VLC Network Stream URL"
+                        />
                       </div>
                   </div>
                 </div>
@@ -3403,9 +3431,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                         {`{ src: "${hlsUrl}", type: "application/x-mpegURL" }`}
                       </code>
                       <div className="flex items-center gap-1">
-                        <button onClick={() => copyToClipboard(`{ src: "${hlsUrl}", type: "application/x-mpegURL" }`, 'videojs')} className="text-zinc-500 hover:text-white p-1 cursor-pointer">
-                          {copiedPlayback === 'videojs' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        </button>
+                        <CopyButton
+                          text={`{ src: "${hlsUrl}", type: "application/x-mpegURL" }`}
+                          className="text-zinc-500 hover:text-white p-1 cursor-pointer"
+                          iconClassName="w-3 h-3"
+                          showIconOnly={true}
+                          title="Copy Video.js Source JSON"
+                        />
                       </div>
                   </div>
                 </div>

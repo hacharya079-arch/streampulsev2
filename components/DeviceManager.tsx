@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { CopyButton } from './CopyButton';
 import { 
   Monitor, 
   Tv, 
@@ -2279,15 +2280,13 @@ WantedBy=graphical.target`;
                 <div className="space-y-2">
                   <div className="flex justify-between items-center bg-zinc-900 px-4 py-2 border border-zinc-800 rounded-t-xl">
                     <span className="text-xs font-bold text-zinc-300 font-mono">/home/pi/streampulse-agent.py</span>
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(agentScriptCode);
-                        alert('Copied Python Agent script to clipboard!');
-                      }}
+                    <CopyButton
+                      text={agentScriptCode}
+                      label="Copy Script"
+                      copiedLabel="Copied!"
                       className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold flex items-center gap-1 border border-zinc-700"
-                    >
-                      <Copy className="w-3 h-3" /> Copy Script
-                    </button>
+                      iconClassName="w-3 h-3"
+                    />
                   </div>
                   <pre className="bg-zinc-950 border-x border-b border-zinc-800 p-4 rounded-b-xl max-h-[350px] overflow-y-auto font-mono text-[10px] text-zinc-400 leading-relaxed no-scrollbar select-all">
                     {agentScriptCode}
@@ -2298,15 +2297,13 @@ WantedBy=graphical.target`;
                 <div className="space-y-2">
                   <div className="flex justify-between items-center bg-zinc-900 px-4 py-2 border border-zinc-800 rounded-t-xl">
                     <span className="text-xs font-bold text-zinc-300 font-mono">/etc/systemd/system/streampulse-agent.service</span>
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(systemdServiceCode);
-                        alert('Copied Systemd Unit to clipboard!');
-                      }}
+                    <CopyButton
+                      text={systemdServiceCode}
+                      label="Copy Service"
+                      copiedLabel="Copied!"
                       className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold flex items-center gap-1 border border-zinc-700"
-                    >
-                      <Copy className="w-3 h-3" /> Copy Service
-                    </button>
+                      iconClassName="w-3 h-3"
+                    />
                   </div>
                   <pre className="bg-zinc-950 border-x border-b border-zinc-800 p-4 rounded-b-xl font-mono text-[10px] text-zinc-400 leading-relaxed select-all">
                     {systemdServiceCode}

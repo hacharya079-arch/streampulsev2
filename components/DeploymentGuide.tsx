@@ -1,19 +1,19 @@
 
 import React from 'react';
-import { Terminal, Server, Shield, Globe, Code, CheckCircle, Copy, ExternalLink, Info } from 'lucide-react';
+import { Terminal, Server, Shield, Globe, Code, CheckCircle, ExternalLink, Info } from 'lucide-react';
+import { CopyButton } from './CopyButton';
 
 const DeploymentGuide: React.FC = () => {
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
   const CodeBlock = ({ code, title }: { code: string; title?: string }) => (
     <div className="bg-black/60 rounded-lg border border-zinc-800 overflow-hidden my-4 font-mono text-sm">
       {title && <div className="bg-zinc-800/50 px-4 py-2 border-b border-zinc-800 text-zinc-400 text-xs flex justify-between items-center">
         <span>{title}</span>
-        <button onClick={() => copyToClipboard(code)} className="hover:text-white transition-colors">
-          <Copy className="w-3.5 h-3.5" />
-        </button>
+        <CopyButton
+          text={code}
+          className="hover:text-white transition-colors"
+          iconClassName="w-3.5 h-3.5"
+          showIconOnly={true}
+        />
       </div>}
       <pre className="p-4 overflow-x-auto text-emerald-500/90 whitespace-pre-wrap">
         <code>{code}</code>
