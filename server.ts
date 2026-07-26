@@ -987,16 +987,24 @@ segment3.ts
     }
 
     try {
-      const existingUser = await db.getUserByUsername(username);
+      const cleanUsername = username.trim();
+      const cleanEmail = email.trim();
+
+      const existingUser = await db.getUserByUsername(cleanUsername);
       if (existingUser) {
-        return res.status(400).json({ error: 'Username already exists' });
+        if (existingUser.username.toLowerCase() === cleanUsername.toLowerCase()) {
+          return res.status(400).json({ error: 'Username already exists' });
+        }
+        if (existingUser.email.toLowerCase() === cleanEmail.toLowerCase()) {
+          return res.status(400).json({ error: 'Email address already in use' });
+        }
       }
 
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(password, salt);
 
       const userRole = (role === 'admin' || role === 'user') ? role : 'user';
-      const newUser = await db.createUser(username, email, passwordHash, userRole);
+      const newUser = await db.createUser(cleanUsername, cleanEmail, passwordHash, userRole);
       
       const updates: Partial<any> = {};
       if (assigned_stream_id) {

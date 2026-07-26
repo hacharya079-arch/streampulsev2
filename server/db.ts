@@ -615,8 +615,13 @@ export const db = {
 
   // USERS
   getUserByUsername: async (username: string): Promise<UserRecord | null> => {
+    if (!username) return null;
+    const clean = username.trim().toLowerCase();
     if (usePostgres && pgPool) {
-      const res = await pgPool.query('SELECT * FROM users WHERE username = $1', [username]);
+      const res = await pgPool.query(
+        'SELECT * FROM users WHERE LOWER(TRIM(username)) = $1 OR LOWER(TRIM(email)) = $1',
+        [clean]
+      );
       if (res.rows.length === 0) return null;
       const r = res.rows[0];
       return {
@@ -625,19 +630,22 @@ export const db = {
         email: r.email,
         password_hash: r.password_hash,
         role: r.role,
-        created_at: r.created_at.toISOString(),
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
         login_history: r.login_history || null,
         display_name: r.display_name || null
       };
     }
-    const user = localState.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    const user = localState.users.find(
+      u => u.username.trim().toLowerCase() === clean || u.email.trim().toLowerCase() === clean
+    );
     return user || null;
   },
 
   getUserById: async (id: number): Promise<UserRecord | null> => {
     const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
+    if (isNaN(numericId)) return null;
     if (usePostgres && pgPool) {
       const res = await pgPool.query('SELECT * FROM users WHERE id = $1', [numericId]);
       if (res.rows.length === 0) return null;
@@ -648,7 +656,7 @@ export const db = {
         email: r.email,
         password_hash: r.password_hash,
         role: r.role,
-        created_at: r.created_at.toISOString(),
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
         login_history: r.login_history || null,
@@ -660,14 +668,14 @@ export const db = {
 
   getUsers: async (): Promise<UserRecord[]> => {
     if (usePostgres && pgPool) {
-      const res = await pgPool.query('SELECT * FROM users ORDER BY username ASC');
+      const res = await pgPool.query('SELECT * FROM users ORDER BY id ASC');
       return res.rows.map(r => ({
         id: r.id,
         username: r.username,
         email: r.email,
         password_hash: r.password_hash,
         role: r.role,
-        created_at: r.created_at.toISOString(),
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
         login_history: r.login_history || null,
@@ -678,10 +686,12 @@ export const db = {
   },
 
   createUser: async (username: string, email: string, passwordHash: string, role: 'admin' | 'user' = 'user'): Promise<UserRecord> => {
+    const cleanUsername = username.trim();
+    const cleanEmail = email.trim();
     if (usePostgres && pgPool) {
       const res = await pgPool.query(
         'INSERT INTO users (username, email, password_hash, role, status, assigned_stream_id, login_history, display_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-        [username, email, passwordHash, role, 'enabled', null, null, username]
+        [cleanUsername, cleanEmail, passwordHash, role, 'enabled', null, null, cleanUsername]
       );
       const r = res.rows[0];
       return {
@@ -690,7 +700,7 @@ export const db = {
         email: r.email,
         password_hash: r.password_hash,
         role: r.role,
-        created_at: r.created_at.toISOString(),
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
         status: r.status || 'enabled',
         assigned_stream_id: r.assigned_stream_id || null,
         login_history: r.login_history || null,
@@ -699,15 +709,15 @@ export const db = {
     }
     const newUser: UserRecord = {
       id: localState.users.length > 0 ? Math.max(...localState.users.map(u => u.id)) + 1 : 1,
-      username,
-      email,
+      username: cleanUsername,
+      email: cleanEmail,
       password_hash: passwordHash,
       role,
       created_at: new Date().toISOString(),
       status: 'enabled',
       assigned_stream_id: null,
       login_history: null,
-      display_name: username
+      display_name: cleanUsername
     };
     localState.users.push(newUser);
     saveLocalState();
@@ -716,9 +726,10 @@ export const db = {
 
   updateUser: async (id: number, updates: Partial<UserRecord>): Promise<UserRecord | null> => {
     const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
+    if (isNaN(numericId)) return null;
     if (usePostgres && pgPool) {
       const keys = Object.keys(updates);
-      if (keys.length === 0) return null;
+      if (keys.length === 0) return await db.getUserById(numericId);
 
       const setClause = keys.map((key, index) => {
         const pgKey = key === 'password_hash' ? 'password_hash' :
@@ -730,21 +741,7 @@ export const db = {
 
       const vals = keys.map(k => (updates as any)[k]);
       await pgPool.query(`UPDATE users SET ${setClause} WHERE id = $1`, [numericId, ...vals]);
-      const res = await pgPool.query('SELECT * FROM users WHERE id = $1', [numericId]);
-      if (res.rows.length === 0) return null;
-      const r = res.rows[0];
-      return {
-        id: r.id,
-        username: r.username,
-        email: r.email,
-        password_hash: r.password_hash,
-        role: r.role,
-        created_at: r.created_at.toISOString(),
-        status: r.status || 'enabled',
-        assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null,
-        display_name: r.display_name || null
-      };
+      return await db.getUserById(numericId);
     }
 
     const index = localState.users.findIndex(u => u.id === numericId);
