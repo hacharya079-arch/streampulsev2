@@ -48,7 +48,11 @@ import {
   FolderOpen,
   FolderSearch,
   Save,
-  AlertCircle
+  AlertCircle,
+  Maximize,
+  Minimize,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { StreamSession } from '../types';
 
@@ -910,11 +914,90 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   const [isTesting, setIsTesting] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const hlsInstanceRef = useRef<any>(null);
   const dashPlayerRef = useRef<any>(null);
 
   // Reset isPlaying to false initially to prevent browser autoplay blocks
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const doc = document as any;
+      const isFS = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.webkitIsFullScreen ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isFS);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const targetElement = playerContainerRef.current || videoRef.current;
+    if (!targetElement) return;
+
+    const doc = document as any;
+    const isFS = !!(
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.webkitIsFullScreen ||
+      doc.mozFullScreenElement ||
+      doc.msFullscreenElement
+    );
+
+    if (!isFS) {
+      const el = targetElement as any;
+      if (el.requestFullscreen) {
+        el.requestFullscreen().catch((err: any) => {
+          console.warn('Standard requestFullscreen failed, attempting webkit fallback:', err);
+          if (videoRef.current && (videoRef.current as any).webkitEnterFullscreen) {
+            (videoRef.current as any).webkitEnterFullscreen();
+          }
+        });
+      } else if (el.webkitRequestFullscreen) {
+        el.webkitRequestFullscreen();
+      } else if (el.webkitRequestFullScreen) {
+        el.webkitRequestFullScreen();
+      } else if (el.mozRequestFullScreen) {
+        el.mozRequestFullScreen();
+      } else if (el.msRequestFullscreen) {
+        el.msRequestFullscreen();
+      } else if (videoRef.current && (videoRef.current as any).webkitEnterFullscreen) {
+        (videoRef.current as any).webkitEnterFullscreen();
+      }
+    } else {
+      if (doc.exitFullscreen) {
+        doc.exitFullscreen().catch((err: any) => console.warn('exitFullscreen error:', err));
+      } else if (doc.webkitExitFullscreen) {
+        doc.webkitExitFullscreen();
+      } else if (doc.webkitCancelFullScreen) {
+        doc.webkitCancelFullScreen();
+      } else if (doc.mozCancelFullScreen) {
+        doc.mozCancelFullScreen();
+      } else if (doc.msExitFullscreen) {
+        doc.msExitFullscreen();
+      }
+    }
+  };
 
   const loadScript = (url: string, id: string): Promise<void> => {
     return new Promise((resolve, reject) => {
@@ -1377,11 +1460,42 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   return (
     <div className={`bg-zinc-900 rounded-xl overflow-hidden border transition-all group shadow-xl flex flex-col h-full relative ${isMonitoring ? 'ring-2 ring-blue-500 border-blue-500/50' : 'border-zinc-800 hover:border-zinc-700'} ${stream.status === 'scheduled' ? 'opacity-90' : ''}`}>
       {/* Video Container */}
-      <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden shrink-0">
+      <div 
+        ref={playerContainerRef}
+        className={`relative aspect-video bg-black flex items-center justify-center overflow-hidden shrink-0 w-full h-full ${
+          isFullscreen ? 'fixed inset-0 z-[999999] w-screen h-screen max-w-none max-h-none rounded-none' : ''
+        }`}
+      >
+        {/* Always-Visible Top-Right Fullscreen Control */}
+        <div className="absolute top-2 right-2 z-30 pointer-events-auto">
+          <button 
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFullscreen();
+            }}
+            className="px-2.5 py-1.5 bg-zinc-950/90 hover:bg-zinc-800 active:scale-95 text-white text-xs font-bold rounded-lg border border-zinc-700/80 shadow-xl cursor-pointer flex items-center gap-1.5 transition-all"
+            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            aria-label={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-4 h-4 text-blue-400" />
+                <span>Exit</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-4 h-4 text-blue-400" />
+                <span>Fullscreen</span>
+              </>
+            )}
+          </button>
+        </div>
+
         {stream.status === 'live' ? (
-          <div className="relative w-full h-full overflow-hidden">
+          <div className="relative w-full h-full overflow-hidden flex items-center justify-center">
             {isPlaying ? (
-              <div className="relative w-full h-full bg-black group/player">
+              <div className="relative w-full h-full bg-black group/player select-none flex items-center justify-center">
                 <video 
                   ref={videoRef}
                   className="w-full h-full object-contain"
@@ -1389,9 +1503,9 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   autoPlay
                   controls={false}
                 />
-                
-                {/* Micro Ambient Shadow Overlay */}
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-3 flex flex-col gap-2 opacity-0 group-hover/player:opacity-100 transition-opacity duration-300 z-10">
+
+                {/* Micro Ambient Shadow Overlay - Always visible on mobile/desktop */}
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3 flex flex-col gap-2 z-20 pointer-events-auto">
                   {/* Quality select & protocol selectors */}
                   <div className="flex items-center justify-between">
                     <div className="flex bg-zinc-950/80 rounded border border-zinc-800 p-0.5 text-[8px] font-bold">
@@ -1422,7 +1536,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                     )}
                   </div>
 
-                  {/* Volume slider & protocol badge */}
+                  {/* Volume slider, protocol badge, and Fullscreen control */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <button 
@@ -1434,7 +1548,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                       </button>
                       
                       <div className="flex items-center gap-1">
-                        <Volume2 className="w-3 h-3 text-zinc-400" />
+                        <button
+                          onClick={() => setVolume(volume > 0 ? 0 : 80)}
+                          className="text-zinc-400 hover:text-white transition-colors cursor-pointer p-0.5"
+                          title={volume === 0 ? "Unmute" : "Mute"}
+                        >
+                          {volume === 0 ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                        </button>
                         <input 
                           type="range" 
                           min="0" 
@@ -1446,10 +1566,26 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                       </div>
                     </div>
 
-                    <span className="text-[8px] font-mono bg-red-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse flex items-center gap-1">
-                      <span className="w-1 h-1 bg-white rounded-full"></span>
-                      LIVE • {playerProtocol.toUpperCase()}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[8px] font-mono bg-red-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse flex items-center gap-1">
+                        <span className="w-1 h-1 bg-white rounded-full"></span>
+                        LIVE • {playerProtocol.toUpperCase()}
+                      </span>
+
+                      <button 
+                        type="button"
+                        onClick={toggleFullscreen}
+                        className="p-1.5 bg-white/20 hover:bg-white/30 active:scale-95 text-white rounded-md transition-all cursor-pointer flex items-center justify-center shrink-0 border border-white/30 shadow-md"
+                        title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                        aria-label={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                      >
+                        {isFullscreen ? (
+                          <Minimize2 className="w-4 h-4 text-white" />
+                        ) : (
+                          <Maximize2 className="w-4 h-4 text-white" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2067,12 +2203,12 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
           )}
         </div>
 
-        {/* Quick Stream Control Buttons (Start Playback / Test Stream) */}
-        <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-zinc-800/50">
+        {/* Quick Stream Control Buttons (Start Playback / Fullscreen / Test Stream) */}
+        <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-zinc-800/50">
           <button 
             onClick={() => setIsPlaying(!isPlaying)}
             disabled={stream.status !== 'live'}
-            className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               isPlaying 
                 ? 'bg-zinc-800 text-white' 
                 : stream.status === 'live' 
@@ -2080,19 +2216,43 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   : 'bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-850'
             }`}
           >
-            <PlayCircle className="w-3.5 h-3.5" /> {isPlaying ? 'Stop Player' : 'Play Live'}
+            <PlayCircle className="w-3.5 h-3.5" /> {isPlaying ? 'Stop' : 'Play Live'}
+          </button>
+          <button 
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isPlaying && stream.status === 'live') {
+                setIsPlaying(true);
+                setTimeout(() => toggleFullscreen(), 100);
+              } else {
+                toggleFullscreen();
+              }
+            }}
+            className="px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700 shadow-sm"
+            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-blue-400" /> Exit
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-blue-400" /> Fullscreen
+              </>
+            )}
           </button>
           <button 
             onClick={runDiagnostics}
             disabled={isTesting}
-            className="px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-zinc-750"
+            className="px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-zinc-750"
           >
             {isTesting ? (
               <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
             )}
-            Verify / Test
+            Verify
           </button>
         </div>
 
@@ -2547,9 +2707,9 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                                   if (!profileSearchQuery) return true;
                                   const q = profileSearchQuery.toLowerCase();
                                   return (
-                                    p.name.toLowerCase().includes(q) ||
-                                    p.resolutionType.toLowerCase().includes(q) ||
-                                    (p.videoCodec && p.videoCodec.toLowerCase().includes(q))
+                                    (p.name || '').toLowerCase().includes(q) ||
+                                    (p.resolutionType || '').toLowerCase().includes(q) ||
+                                    (p.videoCodec && (p.videoCodec || '').toLowerCase().includes(q))
                                   );
                                 });
                                 if (profileSortField && profileSortField !== 'custom') {

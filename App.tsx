@@ -2345,16 +2345,16 @@ CREATE TABLE IF NOT EXISTS streams (
                   ) : usersList.length === 0 ? (
                     <div className="p-8 text-center text-zinc-500">No channel users found.</div>
                   ) : usersList.filter(u => 
-                      u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) || 
-                      u.email.toLowerCase().includes(userSearchQuery.toLowerCase())
+                      (u.username || '').toLowerCase().includes((userSearchQuery || '').toLowerCase()) || 
+                      (u.email || '').toLowerCase().includes((userSearchQuery || '').toLowerCase())
                     ).length === 0 ? (
                     <div className="p-8 text-center text-zinc-500">No matching users found.</div>
                   ) : (
                     <div className="space-y-4">
                       {usersList
                         .filter(u => 
-                          u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) || 
-                          u.email.toLowerCase().includes(userSearchQuery.toLowerCase())
+                          (u.username || '').toLowerCase().includes((userSearchQuery || '').toLowerCase()) || 
+                          (u.email || '').toLowerCase().includes((userSearchQuery || '').toLowerCase())
                         )
                         .map((user) => {
                         const assignedStream = streams.find(s => s.id === user.assigned_stream_id);
@@ -2416,36 +2416,54 @@ CREATE TABLE IF NOT EXISTS streams (
                                   {assignedStream ? `${assignedStream.title} (@${assignedStream.broadcaster})` : 'Unassigned'}
                                 </span>
                               </div>
-                              <div className="flex justify-between items-center">
-                                <div>
-                                  <span className="text-zinc-500 font-bold uppercase text-[9px] block mb-0.5">Login History</span>
-                                  <span className="text-zinc-400 font-medium">
-                                    {user.login_history && user.login_history.length > 0 
-                                      ? `${user.login_history.length} logins recorded` 
-                                      : 'No login records'}
-                                  </span>
-                                </div>
-                                {user.login_history && user.login_history.length > 0 && (
-                                  <button 
-                                    onClick={() => setViewingHistoryUser(viewingHistoryUser?.id === user.id ? null : user)}
-                                    className="text-xs text-blue-500 hover:underline font-bold"
-                                  >
-                                    {viewingHistoryUser?.id === user.id ? 'Hide Logs' : 'View Logs'}
-                                  </button>
-                                )}
-                              </div>
+                              {(() => {
+                                const parsedHistory = Array.isArray(user.login_history)
+                                  ? user.login_history
+                                  : (typeof user.login_history === 'string' && user.login_history.trim())
+                                    ? (() => { try { return JSON.parse(user.login_history); } catch (_) { return []; } })()
+                                    : [];
+                                return (
+                                  <>
+                                    <div className="flex justify-between items-center">
+                                      <div>
+                                        <span className="text-zinc-500 font-bold uppercase text-[9px] block mb-0.5">Login History</span>
+                                        <span className="text-zinc-400 font-medium">
+                                          {parsedHistory.length > 0 
+                                            ? `${parsedHistory.length} logins recorded` 
+                                            : 'No login records'}
+                                        </span>
+                                      </div>
+                                      {parsedHistory.length > 0 && (
+                                        <button 
+                                          onClick={() => setViewingHistoryUser(viewingHistoryUser?.id === user.id ? null : user)}
+                                          className="text-xs text-blue-500 hover:underline font-bold"
+                                        >
+                                          {viewingHistoryUser?.id === user.id ? 'Hide Logs' : 'View Logs'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </div>
 
                             {/* Viewing Login History Dropdown */}
                             {viewingHistoryUser?.id === user.id && (
                               <div className="mt-3 p-3 bg-zinc-950 border border-zinc-900 rounded-lg max-h-[150px] overflow-y-auto space-y-1.5 text-[11px] font-mono">
                                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 font-sans">Recent Logins (IP & Time)</p>
-                                {user.login_history.map((log: any, idx: number) => (
-                                  <div key={idx} className="flex justify-between text-zinc-400 border-b border-zinc-900/50 pb-1 last:border-0 last:pb-0">
-                                    <span>IP: {log.ip || 'Unknown'}</span>
-                                    <span>{new Date(log.timestamp).toLocaleString()}</span>
-                                  </div>
-                                ))}
+                                {(() => {
+                                  const parsedHistory = Array.isArray(user.login_history)
+                                    ? user.login_history
+                                    : (typeof user.login_history === 'string' && user.login_history.trim())
+                                      ? (() => { try { return JSON.parse(user.login_history); } catch (_) { return []; } })()
+                                      : [];
+                                  return parsedHistory.map((log: any, idx: number) => (
+                                    <div key={idx} className="flex justify-between text-zinc-400 border-b border-zinc-900/50 pb-1 last:border-0 last:pb-0">
+                                      <span>IP: {log.ip || 'Unknown'}</span>
+                                      <span>{new Date(log.timestamp).toLocaleString()}</span>
+                                    </div>
+                                  ));
+                                })()}
                               </div>
                             )}
 

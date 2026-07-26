@@ -162,79 +162,92 @@ export const DeviceManager: React.FC<DeviceManagerProps> = ({ token, streams, ne
       return;
     }
 
-    const isSecure = networkDetails.dashboardUrl?.startsWith('https:');
+    const isPageHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    const isSecure = isPageHttps || networkDetails.dashboardUrl?.startsWith('https:');
     const wsProtocol = isSecure ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${networkDetails.activeEndpoint}/api/dashboard-ws`;
     
-    const connectWs = () => {
-      console.log('[Dashboard WS] Connecting to:', wsUrl);
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    let endpointHost = networkDetails.activeEndpoint || window.location.host;
+    if (isPageHttps && (endpointHost.includes(':3000') || /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(endpointHost))) {
+      endpointHost = window.location.host;
+    }
+    const wsUrl = `${wsProtocol}//${endpointHost}/api/dashboard-ws`;
+    
+    let reconnectTimeout: any = null;
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          
-          if (msg.type === 'device_status') {
-            setDevices(prev => prev.map(d => d.id === msg.deviceId ? { ...d, online_status: msg.status } : d));
-            if (selectedDevice?.id === msg.deviceId) {
-              setSelectedDevice(prev => prev ? { ...prev, online_status: msg.status } : null);
-            }
-          } 
-          
-          else if (msg.type === 'device_heartbeat') {
-            setDevices(prev => prev.map(d => d.id === msg.deviceId ? { ...d, ...msg.stats } : d));
-            if (selectedDevice?.id === msg.deviceId) {
-              setSelectedDevice(prev => prev ? { ...prev, ...msg.stats } : null);
-            }
-          } 
-          
-          else if (msg.type === 'device_paired') {
-            setStatusMessage({ text: `Device "${msg.device.name}" successfully paired!`, type: 'success' });
-            fetchData();
-          } 
-          
-          else if (msg.type === 'device_log') {
-            if (selectedDevice?.id === msg.deviceId) {
-              setLogs(prev => [msg.log, ...prev].slice(0, 100));
-            }
-          } 
-          
-          else if (msg.type === 'device_playback_state') {
-            setDevices(prev => prev.map(d => d.id === msg.deviceId ? { 
-              ...d, 
-              online_status: msg.status === 'playing' ? 'playing' : msg.status === 'buffering' ? 'buffering' : 'stopped',
-              current_stream_id: msg.streamId,
-              current_stream_url: msg.streamUrl
-            } : d));
+    const connectWs = () => {
+      try {
+        console.log('[Dashboard WS] Connecting to:', wsUrl);
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
             
-            if (selectedDevice?.id === msg.deviceId) {
-              setSelectedDevice(prev => prev ? { 
-                ...prev, 
+            if (msg.type === 'device_status') {
+              setDevices(prev => prev.map(d => d.id === msg.deviceId ? { ...d, online_status: msg.status } : d));
+              if (selectedDevice?.id === msg.deviceId) {
+                setSelectedDevice(prev => prev ? { ...prev, online_status: msg.status } : null);
+              }
+            } 
+            
+            else if (msg.type === 'device_heartbeat') {
+              setDevices(prev => prev.map(d => d.id === msg.deviceId ? { ...d, ...msg.stats } : d));
+              if (selectedDevice?.id === msg.deviceId) {
+                setSelectedDevice(prev => prev ? { ...prev, ...msg.stats } : null);
+              }
+            } 
+            
+            else if (msg.type === 'device_paired') {
+              setStatusMessage({ text: `Device "${msg.device.name}" successfully paired!`, type: 'success' });
+              fetchData();
+            } 
+            
+            else if (msg.type === 'device_log') {
+              if (selectedDevice?.id === msg.deviceId) {
+                setLogs(prev => [msg.log, ...prev].slice(0, 100));
+              }
+            } 
+            
+            else if (msg.type === 'device_playback_state') {
+              setDevices(prev => prev.map(d => d.id === msg.deviceId ? { 
+                ...d, 
                 online_status: msg.status === 'playing' ? 'playing' : msg.status === 'buffering' ? 'buffering' : 'stopped',
                 current_stream_id: msg.streamId,
                 current_stream_url: msg.streamUrl
-              } : null);
+              } : d));
+              
+              if (selectedDevice?.id === msg.deviceId) {
+                setSelectedDevice(prev => prev ? { 
+                  ...prev, 
+                  online_status: msg.status === 'playing' ? 'playing' : msg.status === 'buffering' ? 'buffering' : 'stopped',
+                  current_stream_id: msg.streamId,
+                  current_stream_url: msg.streamUrl
+                } : null);
+              }
             }
+          } catch (err) {
+            console.warn('[Dashboard WS] Error parsing message:', err);
           }
-        } catch (err) {
-          console.warn('[Dashboard WS] Error parsing message:', err);
-        }
-      };
+        };
 
-      ws.onclose = () => {
-        console.log('[Dashboard WS] Disconnected. Reconnecting in 3 seconds...');
-        setTimeout(connectWs, 3000);
-      };
+        ws.onclose = () => {
+          console.log('[Dashboard WS] Disconnected. Reconnecting in 5 seconds...');
+          reconnectTimeout = setTimeout(connectWs, 5000);
+        };
 
-      ws.onerror = (err) => {
-        console.warn('[Dashboard WS] Error (handled via fallback polling):', err);
-      };
+        ws.onerror = (err) => {
+          console.warn('[Dashboard WS] Error (handled via fallback polling):', err);
+        };
+      } catch (err) {
+        console.warn('[Dashboard WS] WebSocket instantiation failed (fallback polling active):', err);
+      }
     };
 
     connectWs();
 
     return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (wsRef.current) wsRef.current.close();
     };
   }, [token, selectedDevice?.id, networkDetails]);

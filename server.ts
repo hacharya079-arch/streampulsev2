@@ -952,17 +952,29 @@ segment3.ts
   app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
     try {
       const users = await db.getUsers();
-      const sanitized = users.map(u => ({
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        role: u.role,
-        created_at: u.created_at,
-        status: u.status || 'enabled',
-        assigned_stream_id: u.assigned_stream_id || null,
-        login_history: u.login_history || null,
-        display_name: u.display_name || null
-      }));
+      const sanitized = users.map(u => {
+        let historyArray: any[] = [];
+        if (typeof u.login_history === 'string' && u.login_history.trim()) {
+          try {
+            historyArray = JSON.parse(u.login_history);
+          } catch (e) {
+            historyArray = [];
+          }
+        } else if (Array.isArray(u.login_history)) {
+          historyArray = u.login_history;
+        }
+        return {
+          id: u.id,
+          username: u.username,
+          email: u.email,
+          role: u.role,
+          created_at: u.created_at,
+          status: u.status || 'enabled',
+          assigned_stream_id: u.assigned_stream_id || null,
+          login_history: historyArray,
+          display_name: u.display_name || null
+        };
+      });
       res.json(sanitized);
     } catch (err) {
       console.error('Error fetching users:', err);
@@ -3741,8 +3753,19 @@ segment3.ts
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      etag: true,
+      lastModified: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
     app.get('*all', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

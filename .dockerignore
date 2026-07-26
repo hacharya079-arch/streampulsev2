@@ -1,0 +1,11 @@
+# Docker build context ignore rules for StreamPulse
+node_modules
+dist
+.vite
+.git
+.gitignore
+data
+hls
+backups
+*.log
+.DS_Store
