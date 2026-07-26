@@ -95,11 +95,8 @@ else
 fi
 
 # --- Step 4: Rebuilding and Restarting Containers ---
-log_info "Step 4: Cleaning stale build artifacts and rebuilding services with --no-cache..."
+log_info "Step 4: Pulling new container images and rebuilding services..."
 cd "$SCRIPT_DIR"
-
-# Clean host-level dist and vite cache if present
-rm -rf "$ROOT_DIR/dist" "$ROOT_DIR/.vite" 2>/dev/null || true
 
 # Capture active container IDs to track changes
 PREV_CONTAINERS=$(docker compose ps -q)
@@ -107,9 +104,9 @@ PREV_CONTAINERS=$(docker compose ps -q)
 log_info "Pulling base Docker images..."
 docker compose pull || log_warning "Failed to pull base images. Continuing with local cache..."
 
-log_info "Rebuilding container services without cache to ensure newest frontend build is compiled..."
-if docker compose build --no-cache && docker compose up -d; then
-    log_success "Containers rebuilt without cache and restarted successfully."
+log_info "Rebuilding and recreating container services..."
+if docker compose up -d --build; then
+    log_success "Containers rebuilt and restarted successfully."
 else
     log_error "Rebuilding containers failed. Initiating automatic rollback..."
     cd "$SCRIPT_DIR"

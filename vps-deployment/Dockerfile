@@ -3,17 +3,9 @@
 # Build stage for building the frontend Node application
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
-ENV NODE_ENV=production
-
 COPY package*.json ./
 RUN npm ci
-
 COPY . .
-
-# Remove any pre-existing or cached build artifacts
-RUN rm -rf dist .vite
-
-# Build React SPA frontend and Node Express server executable
 RUN npm run build
 
 # Final production stage
@@ -21,7 +13,6 @@ FROM ubuntu:24.04
 
 # Avoid prompt questions during installations
 ENV DEBIAN_FRONTEND=noninteractive
-ENV NODE_ENV=production
 
 # Install core packages, nginx, ffmpeg, build-essential, and nodejs
 RUN apt-get update && apt-get install -y \
@@ -51,11 +42,9 @@ RUN npm ci --only=production
 COPY --from=frontend-builder /app/dist ./dist
 COPY --from=frontend-builder /app/data ./data
 
-# Ensure Nginx www-data user and Node process have read access to built frontend assets
-RUN chmod -R 755 /app/dist && chown -R www-data:www-data /app/dist 2>/dev/null || true
-
 # Setup Nginx RTMP and HTTP serving directories
-RUN mkdir -p /var/www/hls /var/log/nginx && chmod -R 777 /var/www/hls /var/log/nginx
+RUN mkdir -p /var/www/hls && chmod -R 755 /var/www/hls
+RUN mkdir -p /var/log/nginx
 
 # Copy configuration files
 COPY vps-deployment/nginx.conf /etc/nginx/nginx.conf
