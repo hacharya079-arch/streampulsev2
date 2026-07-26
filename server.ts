@@ -123,6 +123,9 @@ function saveServerSettings() {
     const dir = path.dirname(SETTINGS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(serverSettings, null, 2), 'utf-8');
+    db.setAppSetting('server_settings', JSON.stringify(serverSettings)).catch(err => {
+      console.error('Error saving server settings to DB:', err);
+    });
   } catch (err) {
     console.error('Error saving server settings:', err);
   }
@@ -141,6 +144,17 @@ function saveForcedResets() {
 async function startServer() {
   // Initialize Database tables (Postgres or Fallback JSON)
   await db.init();
+
+  try {
+    const dbSettings = await db.getAppSetting('server_settings');
+    if (dbSettings) {
+      const parsed = JSON.parse(dbSettings);
+      serverSettings = { ...serverSettings, ...parsed };
+      console.log('[Server] Restored serverSettings from PostgreSQL/DB successfully.');
+    }
+  } catch (err) {
+    console.error('[Server] Error restoring serverSettings from DB:', err);
+  }
 
   const app = express();
   app.use(express.json());
@@ -1950,6 +1964,31 @@ segment3.ts
     };
     saveServerSettings();
     res.json({ success: true, message: 'Streaming configuration saved successfully.' });
+  });
+
+  // User and Dashboard Preferences API (Persisted in PostgreSQL)
+  app.get('/api/preferences', authenticateToken, async (req: any, res) => {
+    try {
+      const pref = await db.getAppSetting('dashboard_preferences');
+      if (!pref) {
+        return res.json({});
+      }
+      res.json(JSON.parse(pref));
+    } catch (err) {
+      console.error('[Preferences] Error loading preferences:', err);
+      res.status(500).json({ error: 'Failed to load preferences' });
+    }
+  });
+
+  app.post('/api/preferences', authenticateToken, async (req: any, res) => {
+    try {
+      const payload = JSON.stringify(req.body || {});
+      await db.setAppSetting('dashboard_preferences', payload);
+      res.json({ success: true, preferences: req.body });
+    } catch (err) {
+      console.error('[Preferences] Error saving preferences:', err);
+      res.status(500).json({ error: 'Failed to save preferences' });
+    }
   });
 
   // System Management Actions

@@ -155,6 +155,7 @@ interface LocalDBState {
   playbackHistory: PlaybackHistoryRecord[];
   deviceLogs: DeviceLogRecord[];
   deviceSchedules: DeviceScheduleRecord[];
+  appSettings?: Record<string, string>;
 }
 
 let localState: LocalDBState = {
@@ -196,7 +197,8 @@ let localState: LocalDBState = {
   deviceGroupMembers: [],
   playbackHistory: [],
   deviceLogs: [],
-  deviceSchedules: []
+  deviceSchedules: [],
+  appSettings: {}
 };
 
 // Load saved data if exists
@@ -218,7 +220,8 @@ if (fs.existsSync(JSON_DB_PATH)) {
       deviceGroupMembers: parsed.deviceGroupMembers || [],
       playbackHistory: parsed.playbackHistory || [],
       deviceLogs: parsed.deviceLogs || [],
-      deviceSchedules: parsed.deviceSchedules || []
+      deviceSchedules: parsed.deviceSchedules || [],
+      appSettings: parsed.appSettings || {}
     };
   } catch (err) {
     console.error('Error reading JSON DB fallback, using defaults', err);
@@ -448,6 +451,12 @@ export const db = {
               stream_id VARCHAR(50),
               stream_url VARCHAR(255),
               enabled BOOLEAN DEFAULT TRUE
+            );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key VARCHAR(100) PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
           `);
 
@@ -1626,6 +1635,38 @@ export const db = {
       return true;
     }
     return false;
+  },
+
+  getAppSetting: async (key: string): Promise<string | null> => {
+    if (usePostgres && pgPool) {
+      const res = await pgPool.query('SELECT value FROM app_settings WHERE key = $1', [key]);
+      if (res.rows.length > 0) return res.rows[0].value;
+      return null;
+    }
+    return (localState as any).appSettings?.[key] || null;
+  },
+
+  setAppSetting: async (key: string, value: string): Promise<void> => {
+    if (usePostgres && pgPool) {
+      await pgPool.query(
+        'INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP',
+        [key, value]
+      );
+      return;
+    }
+    if (!(localState as any).appSettings) (localState as any).appSettings = {};
+    (localState as any).appSettings[key] = value;
+    saveLocalState();
+  },
+
+  getAllAppSettings: async (): Promise<Record<string, string>> => {
+    if (usePostgres && pgPool) {
+      const res = await pgPool.query('SELECT key, value FROM app_settings');
+      const out: Record<string, string> = {};
+      res.rows.forEach(r => { out[r.key] = r.value; });
+      return out;
+    }
+    return (localState as any).appSettings || {};
   },
 
   close: async (): Promise<void> => {

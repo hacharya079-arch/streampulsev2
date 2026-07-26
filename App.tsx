@@ -770,8 +770,53 @@ CREATE TABLE IF NOT EXISTS streams (
     }
   }, [token, fetchWithNetworkHeaders, handleLogout]);
 
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+
+  const fetchUserPreferences = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetchWithNetworkHeaders('/api/preferences');
+      if (res.ok) {
+        const pref = await safeParseJson(res);
+        if (pref && typeof pref === 'object') {
+          if (pref.activeTab) setActiveTab(pref.activeTab);
+          if (pref.manualIp) setManualIp(pref.manualIp);
+          if (pref.customDomain) setCustomDomain(pref.customDomain);
+          if (pref.creationIpMode) setCreationIpMode(pref.creationIpMode);
+          if (pref.deploymentMode) setDeploymentMode(pref.deploymentMode);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading preferences from DB:', err);
+    } finally {
+      setPreferencesLoaded(true);
+    }
+  }, [token, fetchWithNetworkHeaders, safeParseJson]);
+
+  const saveUserPreferences = useCallback(async (overrides: Record<string, any> = {}) => {
+    if (!token) return;
+    const payload = {
+      activeTab,
+      manualIp,
+      customDomain,
+      creationIpMode,
+      deploymentMode,
+      ...overrides
+    };
+    try {
+      await fetchWithNetworkHeaders('/api/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      console.error('Error saving user preferences to DB:', err);
+    }
+  }, [token, fetchWithNetworkHeaders, activeTab, manualIp, customDomain, creationIpMode, deploymentMode]);
+
   useEffect(() => {
     if (!token) return;
+    fetchUserPreferences();
     fetchStreams();
     fetchStats();
     fetchActionLogs();
@@ -786,7 +831,15 @@ CREATE TABLE IF NOT EXISTS streams (
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [token, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
+  }, [token, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
+
+  useEffect(() => {
+    if (!preferencesLoaded || !token) return;
+    const timer = setTimeout(() => {
+      saveUserPreferences();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [preferencesLoaded, token, activeTab, manualIp, customDomain, creationIpMode, deploymentMode, saveUserPreferences]);
 
   // Handle Stream Creation via API
   const handleCreateStream = async () => {
