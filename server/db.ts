@@ -549,7 +549,7 @@ export const db = {
               console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
             }
 
-            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash || !matchesPassword) {
+            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
               const salt = await bcrypt.genSalt(10);
               const passwordHash = await bcrypt.hash(adminPassword, salt);
               await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, targetAdmin.id]);
@@ -583,7 +583,7 @@ export const db = {
         const salt = bcrypt.genSaltSync(10);
         const passwordHash = bcrypt.hashSync(adminPassword, salt);
         localState.users.push({
-          id: localState.users.length > 0 ? Math.max(...localState.users.map(u => u.id)) + 1 : 1,
+          id: localState.users.length > 0 ? Math.max(0, ...localState.users.map(u => Number(u.id) || 0)) + 1 : 1,
           username: adminUsername,
           email: `${adminUsername}@streampulse.io`,
           password_hash: passwordHash,
@@ -598,20 +598,12 @@ export const db = {
         // An administrator exists - verify the password hash
         const currentHash = targetAdmin.password_hash;
         const isCorrupted = !isValidBcryptHash(currentHash);
-        let matchesPassword = false;
-        if (!isCorrupted && currentHash) {
-          try {
-            matchesPassword = bcrypt.compareSync(adminPassword, currentHash);
-          } catch (_) {
-            matchesPassword = false;
-          }
-        }
 
         if (isCorrupted) {
           console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
         }
 
-        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash || !matchesPassword) {
+        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
           const salt = bcrypt.genSaltSync(10);
           const passwordHash = bcrypt.hashSync(adminPassword, salt);
           targetAdmin.password_hash = passwordHash;
@@ -660,7 +652,36 @@ export const db = {
     return user || null;
   },
 
-  getUserById: async (id: number): Promise<UserRecord | null> => {
+  getUserByEmail: async (email: string): Promise<UserRecord | null> => {
+    if (!email) return null;
+    const clean = email.trim().toLowerCase();
+    if (usePostgres && pgPool) {
+      const res = await pgPool.query(
+        'SELECT * FROM users WHERE LOWER(TRIM(email)) = $1',
+        [clean]
+      );
+      if (res.rows.length === 0) return null;
+      const r = res.rows[0];
+      return {
+        id: r.id,
+        username: r.username,
+        email: r.email,
+        password_hash: r.password_hash,
+        role: r.role,
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
+        status: r.status || 'enabled',
+        assigned_stream_id: r.assigned_stream_id || null,
+        login_history: r.login_history || null,
+        display_name: r.display_name || null
+      };
+    }
+    const user = localState.users.find(
+      u => (u.email ? u.email.trim().toLowerCase() : '') === clean
+    );
+    return user || null;
+  },
+
+  getUserById: async (id: number | string): Promise<UserRecord | null> => {
     const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
     if (isNaN(numericId)) return null;
     if (usePostgres && pgPool) {
@@ -680,7 +701,7 @@ export const db = {
         display_name: r.display_name || null
       };
     }
-    return localState.users.find(u => u.id === numericId) || null;
+    return localState.users.find(u => Number(u.id) === numericId) || null;
   },
 
   getUsers: async (): Promise<UserRecord[]> => {
@@ -734,7 +755,7 @@ export const db = {
       };
     }
     const newUser: UserRecord = {
-      id: localState.users.length > 0 ? Math.max(...localState.users.map(u => u.id)) + 1 : 1,
+      id: localState.users.length > 0 ? Math.max(0, ...localState.users.map(u => Number(u.id) || 0)) + 1 : 1,
       username: cleanUsername,
       email: cleanEmail,
       password_hash: passwordHash,
@@ -750,7 +771,7 @@ export const db = {
     return newUser;
   },
 
-  updateUser: async (id: number, updates: Partial<UserRecord>): Promise<UserRecord | null> => {
+  updateUser: async (id: number | string, updates: Partial<UserRecord>): Promise<UserRecord | null> => {
     const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
     if (isNaN(numericId)) return null;
     if (usePostgres && pgPool) {
@@ -770,14 +791,14 @@ export const db = {
       return await db.getUserById(numericId);
     }
 
-    const index = localState.users.findIndex(u => u.id === numericId);
+    const index = localState.users.findIndex(u => Number(u.id) === numericId);
     if (index === -1) return null;
     localState.users[index] = { ...localState.users[index], ...updates };
     saveLocalState();
     return localState.users[index];
   },
 
-  deleteUser: async (id: number): Promise<boolean> => {
+  deleteUser: async (id: number | string): Promise<boolean> => {
     const numericId = typeof id === 'number' ? id : parseInt(id as any, 10);
     if (usePostgres && pgPool) {
       // Safely remove user-channel assignments in streams before deletion
@@ -787,10 +808,10 @@ export const db = {
     }
     // Set userId = 0 on associated localState streams to preserve them safely
     if (localState.streams) {
-      localState.streams = localState.streams.map(s => s.userId === numericId ? { ...s, userId: 0 } : s);
+      localState.streams = localState.streams.map(s => Number(s.userId) === numericId ? { ...s, userId: 0 } : s);
     }
     const lenBefore = localState.users.length;
-    localState.users = localState.users.filter(u => u.id !== numericId);
+    localState.users = localState.users.filter(u => Number(u.id) !== numericId);
     if (localState.users.length !== lenBefore) {
       saveLocalState();
       return true;

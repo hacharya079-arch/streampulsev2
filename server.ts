@@ -886,7 +886,10 @@ segment3.ts
     }
 
     try {
-      const user = await db.getUserByUsername(username);
+      const cleanUsername = String(username).trim();
+      const rawPassword = String(password);
+
+      const user = await db.getUserByUsername(cleanUsername);
       if (!user) {
         return res.status(400).json({ error: 'Invalid username or password' });
       }
@@ -895,7 +898,7 @@ segment3.ts
         return res.status(403).json({ error: 'Access denied: Your account is currently disabled' });
       }
 
-      const isMatch = await bcrypt.compare(password, user.password_hash);
+      const isMatch = await bcrypt.compare(rawPassword, user.password_hash);
       if (!isMatch) {
         return res.status(400).json({ error: 'Invalid username or password' });
       }
@@ -903,19 +906,19 @@ segment3.ts
       // Record user login details
       await db.recordUserLogin(user.id, req.ip || '0.0.0.0');
 
-      const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({ id: Number(user.id), username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
 
       res.json({
         token,
         user: {
-          id: user.id,
+          id: Number(user.id),
           username: user.username,
           email: user.email,
           role: user.role,
           createdAt: user.created_at,
           status: user.status || 'enabled',
           assigned_stream_id: user.assigned_stream_id || null,
-          mustResetPassword: forcedPasswordResets.has(user.id)
+          mustResetPassword: forcedPasswordResets.has(Number(user.id))
         }
       });
     } catch (err) {
@@ -926,19 +929,22 @@ segment3.ts
 
   app.get('/api/auth/me', authenticateToken, async (req: any, res) => {
     try {
-      const user = await db.getUserByUsername(req.user.username);
+      let user = await db.getUserById(req.user.id);
+      if (!user && req.user.username) {
+        user = await db.getUserByUsername(req.user.username);
+      }
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
       res.json({
-        id: user.id,
+        id: Number(user.id),
         username: user.username,
         email: user.email,
         role: user.role,
         createdAt: user.created_at,
         status: user.status || 'enabled',
         assigned_stream_id: user.assigned_stream_id || null,
-        mustResetPassword: forcedPasswordResets.has(user.id)
+        mustResetPassword: forcedPasswordResets.has(Number(user.id))
       });
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -964,7 +970,7 @@ segment3.ts
           historyArray = u.login_history;
         }
         return {
-          id: u.id,
+          id: Number(u.id),
           username: u.username,
           email: u.email,
           role: u.role,
@@ -988,32 +994,33 @@ segment3.ts
       return res.status(400).json({ error: 'Username, email, and password are required' });
     }
 
-    if (username.length < 3) {
+    const cleanUsername = String(username).trim();
+    const cleanEmail = String(email).trim();
+    const rawPassword = String(password);
+
+    if (cleanUsername.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters long' });
     }
-    if (!email.includes('@')) {
+    if (!cleanEmail.includes('@')) {
       return res.status(400).json({ error: 'Please enter a valid email address' });
     }
-    if (password.length < 6) {
+    if (rawPassword.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters long' });
     }
 
     try {
-      const cleanUsername = username.trim();
-      const cleanEmail = email.trim();
-
       const existingUserByUsername = await db.getUserByUsername(cleanUsername);
       if (existingUserByUsername && existingUserByUsername.username.toLowerCase() === cleanUsername.toLowerCase()) {
         return res.status(400).json({ error: 'Username already exists' });
       }
 
-      const existingUserByEmail = await db.getUserByUsername(cleanEmail);
+      const existingUserByEmail = await db.getUserByEmail(cleanEmail);
       if (existingUserByEmail && existingUserByEmail.email.toLowerCase() === cleanEmail.toLowerCase()) {
         return res.status(400).json({ error: 'Email address already in use' });
       }
 
       const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash(password, salt);
+      const passwordHash = await bcrypt.hash(rawPassword, salt);
 
       const userRole = (role === 'admin' || role === 'user') ? role : 'user';
       const finalDisplayName = display_name || cleanUsername;
@@ -1027,7 +1034,7 @@ segment3.ts
       );
 
       res.status(201).json({
-        id: newUser.id,
+        id: Number(newUser.id),
         username: newUser.username,
         email: newUser.email,
         role: newUser.role,
@@ -1058,27 +1065,36 @@ segment3.ts
 
       const updates: Partial<any> = {};
       if (username !== undefined) {
-        if (!username || username.trim().length < 3) {
+        const cleanedUsername = String(username).trim();
+        if (cleanedUsername.length < 3) {
           return res.status(400).json({ error: 'Username must be at least 3 characters long' });
         }
-        const other = await db.getUserByUsername(username);
-        if (other && other.id !== userId) {
+        const other = await db.getUserByUsername(cleanedUsername);
+        if (other && Number(other.id) !== userId && other.username.toLowerCase() === cleanedUsername.toLowerCase()) {
           return res.status(400).json({ error: 'Username already in use' });
         }
-        updates.username = username;
+        updates.username = cleanedUsername;
       }
       if (email !== undefined) {
-        if (!email || !email.includes('@')) {
+        const cleanedEmail = String(email).trim();
+        if (!cleanedEmail || !cleanedEmail.includes('@')) {
           return res.status(400).json({ error: 'Please enter a valid email address' });
         }
-        updates.email = email;
+        const otherEmail = await db.getUserByEmail(cleanedEmail);
+        if (otherEmail && Number(otherEmail.id) !== userId && otherEmail.email.toLowerCase() === cleanedEmail.toLowerCase()) {
+          return res.status(400).json({ error: 'Email address already in use' });
+        }
+        updates.email = cleanedEmail;
       }
       if (password) {
-        if (password.length < 6) {
+        const rawPassword = String(password);
+        if (rawPassword.length < 6) {
           return res.status(400).json({ error: 'Password must be at least 6 characters long' });
         }
         const salt = await bcrypt.genSalt(10);
-        updates.password_hash = await bcrypt.hash(password, salt);
+        updates.password_hash = await bcrypt.hash(rawPassword, salt);
+        forcedPasswordResets.delete(userId);
+        saveForcedResets();
       }
       if (status !== undefined) {
         if (status !== 'enabled' && status !== 'disabled') {
@@ -1086,7 +1102,7 @@ segment3.ts
         }
         // If disabling self or disabling the final active administrator
         if (status === 'disabled') {
-          if (userId === req.user.id) {
+          if (userId === Number(req.user.id)) {
             return res.status(400).json({ error: 'You cannot disable your own logged-in administrator account' });
           }
           if (user.role === 'admin') {
@@ -1105,7 +1121,7 @@ segment3.ts
         }
         // If demoting self or demoting the final active administrator
         if (role === 'user') {
-          if (userId === req.user.id) {
+          if (userId === Number(req.user.id)) {
             return res.status(400).json({ error: 'You cannot demote your own logged-in administrator account' });
           }
           if (user.role === 'admin') {
@@ -1119,7 +1135,7 @@ segment3.ts
         updates.role = role;
       }
       if (assigned_stream_id !== undefined) {
-        updates.assigned_stream_id = assigned_stream_id;
+        updates.assigned_stream_id = assigned_stream_id || null;
       }
       if (display_name !== undefined) {
         updates.display_name = display_name;
@@ -1127,11 +1143,10 @@ segment3.ts
 
       const updated = await db.updateUser(userId, updates);
       if (!updated) {
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(500).json({ error: 'Failed to update user' });
       }
-
       res.json({
-        id: updated.id,
+        id: Number(updated.id),
         username: updated.username,
         email: updated.email,
         role: updated.role,
@@ -1159,7 +1174,7 @@ segment3.ts
       }
 
       // Prevent deletion of currently logged-in administrator
-      if (userId === req.user.id) {
+      if (userId === Number(req.user.id)) {
         return res.status(400).json({ error: 'Access denied: You cannot delete your own logged-in administrator account' });
       }
 
