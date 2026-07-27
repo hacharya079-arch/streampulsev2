@@ -1130,8 +1130,12 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   // Automatically trigger active playback state when stream transitions to live, or flush video buffer on offline
   useEffect(() => {
     if (stream.status === 'live') {
+      console.log(`[StreamPlayer Engine] Stream "${stream.title}" status is LIVE. Activating player playback engine...`);
       setIsPlaying(true);
     } else {
+      console.log(`[StreamPlayer Engine] Stream "${stream.title}" status is ${stream.status ? stream.status.toUpperCase() : 'OFFLINE'}. Flushing video buffers and stopping player...`);
+      setIsPlaying(false);
+      isRecoveringRef.current = false;
       // Immediate stream loss cleanup: stop video, flush buffer, destroy player instance
       if (hlsInstanceRef.current) {
         try {
@@ -1166,11 +1170,11 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       await video.play();
       console.log('[StreamPlayer Engine] Playback started/resumed successfully.');
     } catch (err: any) {
-      console.warn('[StreamPlayer Engine] Unmuted play blocked by browser, attempting muted play while preserving volume state:', err);
+      console.warn('[StreamPlayer Engine] Unmuted play blocked by browser policy, attempting muted play fallback while preserving user volume state:', err);
       try {
         video.muted = true;
         await video.play();
-        console.log('[StreamPlayer Engine] Muted playback started successfully.');
+        console.log('[StreamPlayer Engine] Fallback muted playback started successfully.');
       } catch (mutedErr) {
         console.error('[StreamPlayer Engine] Automatic playback start failed:', mutedErr);
       }
@@ -1194,7 +1198,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
   // Interactive Player Lifecycle effect (instantiates Hls.js or Dash.js on the <video> target)
   useEffect(() => {
-    if (!isPlaying || !videoRef.current) return;
+    if (!isPlaying || !videoRef.current || stream.status !== 'live') return;
 
     let active = true;
     let recoveryTimer: any = null;
@@ -1203,6 +1207,8 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     const initPlayer = async () => {
       const video = videoRef.current;
       if (!video) return;
+
+      console.log(`[StreamPlayer Engine] Initializing HLS player for stream "${stream.title}" (${hlsUrl})...`);
 
       // Clean up previous Hls instance & reset video element before re-attaching
       if (hlsInstanceRef.current) {
@@ -1254,12 +1260,14 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             });
 
             const cacheBustUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+            console.log(`[HLS Engine] Loading fresh manifest: ${cacheBustUrl}`);
             hls.loadSource(cacheBustUrl);
             hls.attachMedia(video);
             hlsInstanceRef.current = hls;
 
             hls.on(Hls.Events.MANIFEST_PARSED, (event: any, data: any) => {
               if (!active) return;
+              console.log(`[HLS Engine] Manifest parsed successfully (${data.levels ? data.levels.length : 0} quality levels).`);
               nonFatalErrorCount = 0;
               isRecoveringRef.current = false;
               hls.currentLevel = -1;
@@ -1283,11 +1291,10 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             });
 
             // Listen for first fragment buffered to resume playback once media frame is ready
-            let fragBufferedCount = 0;
             hls.on(Hls.Events.FRAG_BUFFERED, () => {
               if (!active) return;
-              fragBufferedCount++;
               if (video.paused && stream.status === 'live') {
+                console.log('[HLS Engine] First fragment buffered. Triggering auto-play...');
                 safePlayVideo(video);
               }
             });
@@ -1304,7 +1311,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             const triggerAutoRecovery = () => {
               if (!active || isRecoveringRef.current) return;
               isRecoveringRef.current = true;
-              console.log('[HLS Recovery Engine] Proactively polling for stream playlist recovery...');
+              console.log('[HLS Recovery Engine] HLS stream interrupted or offline. Clearing video buffers and starting recovery poll...');
 
               if (hlsInstanceRef.current) {
                 try {
@@ -1332,7 +1339,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   if (res.ok) {
                     const text = await res.text();
                     if (text && text.includes('#EXTM3U')) {
-                      console.log('[HLS Recovery Engine] Stream playlist active! Re-attaching and auto-resuming playback...');
+                      console.log('[HLS Recovery Engine] Stream playlist detected LIVE! Re-attaching player and recovering playback automatically...');
                       if (recoveryTimer) clearInterval(recoveryTimer);
                       isRecoveringRef.current = false;
                       initPlayer();
@@ -1351,10 +1358,10 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               if (!active) return;
 
               if (data.fatal) {
-                console.warn(`[HLS Engine] Fatal player error detected (${data.type}, ${data.details}), starting automatic recovery...`);
+                console.warn(`[HLS Engine] Fatal error detected (${data.type}, ${data.details}). Triggering recovery flow...`);
                 switch (data.type) {
                   case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.warn('[HLS Engine] Media error encountered, recovering media buffer...');
+                    console.warn('[HLS Engine] Media buffer error, attempting media recovery...');
                     try {
                       hls.recoverMediaError();
                     } catch (e) {
@@ -1370,7 +1377,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                   nonFatalErrorCount++;
                   if (nonFatalErrorCount > 6) {
-                    console.warn('[HLS Engine] Persistent non-fatal network errors detected, triggering auto-recovery...');
+                    console.warn('[HLS Engine] Persistent non-fatal network errors detected, initiating stream recovery...');
                     triggerAutoRecovery();
                   }
                 }
@@ -1380,7 +1387,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             // Monitor video element stall/ended/error events
             const handleStallOrEnd = () => {
               if (!active) return;
-              console.warn('[HLS Engine] Video element stalled or ended during live playback, checking stream status...');
+              console.warn('[HLS Engine] Video element stalled or ended during live playback. Checking stream status and starting recovery...');
               triggerAutoRecovery();
             };
 
@@ -1407,7 +1414,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             video.addEventListener('ended', handleNativeError);
           }
         } catch (err) {
-          console.error('HLS load error:', err);
+          console.error('[HLS Engine] HLS load error:', err);
         }
       } else {
         // MPEG-DASH Playback using dash.js
@@ -1431,7 +1438,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             });
           }
         } catch (err) {
-          console.error('DASH load error:', err);
+          console.error('[DASH Engine] DASH load error:', err);
         }
       }
     };

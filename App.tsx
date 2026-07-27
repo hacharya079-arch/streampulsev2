@@ -822,7 +822,29 @@ CREATE TABLE IF NOT EXISTS streams (
     fetchActionLogs();
     fetchNetworkDetails();
 
-    // Poll server statistics, streams, logs, and network details every 3 seconds
+    // Setup real-time WebSocket listener for immediate stream status change events
+    let ws: WebSocket | null = null;
+    try {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      ws = new WebSocket(`${wsProtocol}//${host}/api/dashboard-ws`);
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'stream_status_change' && (msg.streamId || msg.streamKey)) {
+            console.log(`[WebSocket Engine] Stream status updated in real-time: ${msg.streamKey || msg.streamId} -> ${msg.status}`);
+            setStreams(prevStreams =>
+              prevStreams.map(s => (s.id === msg.streamId || s.streamKey === msg.streamKey) ? { ...s, status: msg.status } : s)
+            );
+          }
+        } catch (e) {}
+      };
+    } catch (err) {
+      console.warn('[WebSocket Engine] Dashboard WS connection failed:', err);
+    }
+
+    // Poll server statistics, streams, logs, and network details every 3 seconds as fallback
     const interval = setInterval(() => {
       fetchStreams();
       fetchStats();
@@ -830,7 +852,14 @@ CREATE TABLE IF NOT EXISTS streams (
       fetchNetworkDetails();
     }, 3000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (ws) {
+        try {
+          ws.close();
+        } catch (_) {}
+      }
+    };
   }, [token, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
 
   // Removed auto-save useEffect to enforce explicit Save button functionality as required.

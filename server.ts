@@ -171,6 +171,9 @@ async function startServer() {
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Range');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
     }
@@ -182,6 +185,9 @@ async function startServer() {
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Range');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
     }
@@ -2795,6 +2801,14 @@ segment3.ts
         startTime: new Date().toISOString()
       });
 
+      console.log(`[Stream Monitor] [State Transition] Stream "${stream.title}" (${streamKey}) -> LIVE via RTMP publish callback`);
+      broadcastToDashboards({
+        type: 'stream_status_change',
+        streamId: stream.id,
+        streamKey: streamKey,
+        status: 'live'
+      });
+
       return res.status(200).send('OK');
     } catch (err) {
       console.error(`[RTMP Publish Callback] Error:`, err);
@@ -2822,6 +2836,14 @@ segment3.ts
         await db.updateStream(stream.id, { 
           status: 'offline',
           viewers: 0
+        });
+
+        console.log(`[Stream Monitor] [State Transition] Stream "${stream.title}" (${streamKey}) -> OFFLINE via RTMP unpublish callback`);
+        broadcastToDashboards({
+          type: 'stream_status_change',
+          streamId: stream.id,
+          streamKey: streamKey,
+          status: 'offline'
         });
 
         await logStreamAction(stream.id, stream.title, 'System/RTMP Ingest', 'disable', req.ip || '0.0.0.0', 'Stream disconnected from RTMP server');
@@ -3937,17 +3959,18 @@ segment3.ts
             lastMtime = stat.mtimeMs;
           }
 
-          const isHlsFresh = (Date.now() - lastMtime) < 20000;
+          const isHlsFresh = (Date.now() - lastMtime) < 5000;
           const isFfRunning = activeFfProcesses.has(s.streamKey);
 
-          const isCurrentlyActive = isHlsFresh || isFfRunning;
+          // Stream is considered active if FFmpeg process is running OR master playlist was updated in the last 5 seconds
+          const isCurrentlyActive = (isFfRunning || isHlsFresh) && lastMtime > 0;
 
           if (isCurrentlyActive) {
             activeCount++;
             totalViewers += (s.viewers || 0);
 
             if (s.status !== 'live') {
-              console.log(`[Stream Monitor] Stream "${s.title}" (${s.streamKey}) is actively transcoding/broadcasting. Updating status -> live`);
+              console.log(`[Stream Monitor] [State Transition] Stream "${s.title}" (${s.streamKey}) is actively broadcasting. Updating status -> LIVE`);
               await db.updateStream(s.id, { status: 'live', startTime: s.startTime || new Date().toISOString() });
               broadcastToDashboards({
                 type: 'stream_status_change',
@@ -3957,7 +3980,7 @@ segment3.ts
               });
             }
           } else if (!isCurrentlyActive && s.status === 'live') {
-            console.log(`[Stream Monitor] Stream "${s.title}" (${s.streamKey}) is no longer active. Updating status -> offline`);
+            console.log(`[Stream Monitor] [State Transition] Stream "${s.title}" (${s.streamKey}) HLS update stale / FFmpeg terminated. Updating status -> OFFLINE`);
             await db.updateStream(s.id, { status: 'offline', viewers: 0 });
             broadcastToDashboards({
               type: 'stream_status_change',
