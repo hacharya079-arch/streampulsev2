@@ -1,0 +1,12 @@
+[
+  {
+    "id": "log_308jq8v6e",
+    "streamId": "daruqwhih",
+    "streamTitle": "media",
+    "user": "System/RTMP Ingest",
+    "action": "disable",
+    "timestamp": "2026-07-27T13:48:33.212Z",
+    "ip": "127.0.0.1",
+    "details": "Stream disconnected from RTMP server"
+  }
+]

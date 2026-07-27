@@ -1071,25 +1071,69 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     }
   }, [stream.status]);
 
+  // Ref to track whether recovery polling is active
+  const isRecoveringRef = useRef<boolean>(false);
+
+  // Helper to safely execute play with muted fallback if browser blocks unmuted play
+  const safePlayVideo = async (video: HTMLVideoElement) => {
+    try {
+      await video.play();
+      console.log('[StreamPlayer Engine] Playback started/resumed successfully.');
+    } catch (err: any) {
+      console.warn('[StreamPlayer Engine] Unmuted play blocked, attempting muted play:', err);
+      try {
+        video.muted = true;
+        setVolume(0);
+        await video.play();
+        console.log('[StreamPlayer Engine] Muted playback started successfully.');
+      } catch (mutedErr) {
+        console.error('[StreamPlayer Engine] Automatic playback start failed:', mutedErr);
+      }
+    }
+  };
+
+  // Helper to reset HTMLVideoElement state cleanly before re-attaching media
+  const resetVideoElement = (video: HTMLVideoElement) => {
+    try {
+      video.pause();
+      video.removeAttribute('src');
+      if (video.srcObject) {
+        video.srcObject = null;
+      }
+      video.load();
+    } catch (e) {
+      console.warn('[StreamPlayer Engine] Video reset notice:', e);
+    }
+  };
+
   // Interactive Player Lifecycle effect (instantiates Hls.js or Dash.js on the <video> target)
   useEffect(() => {
-    if (!isPlaying || stream.status !== 'live' || !videoRef.current) return;
+    if (!isPlaying || !videoRef.current) return;
 
     let active = true;
-    let retryTimer: any = null;
+    let recoveryTimer: any = null;
+    let nonFatalErrorCount = 0;
 
     const initPlayer = async () => {
-      // Clear existing players
+      const video = videoRef.current;
+      if (!video) return;
+
+      // Clean up previous Hls instance & reset video element before re-attaching
       if (hlsInstanceRef.current) {
-        hlsInstanceRef.current.destroy();
+        try {
+          hlsInstanceRef.current.detachMedia();
+          hlsInstanceRef.current.destroy();
+        } catch (_) {}
         hlsInstanceRef.current = null;
       }
       if (dashPlayerRef.current) {
-        dashPlayerRef.current.destroy();
+        try {
+          dashPlayerRef.current.destroy();
+        } catch (_) {}
         dashPlayerRef.current = null;
       }
 
-      const video = videoRef.current;
+      resetVideoElement(video);
       video.muted = volume === 0;
       video.volume = volume / 100;
 
@@ -1104,7 +1148,6 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             const hls = new Hls({
               enableWorker: true,
               lowLatencyMode: true,
-              // Mobile buffer optimization: prevent memory exhaustion and eliminate mobile buffering stalls
               maxBufferLength: isMobile ? 10 : 30,
               maxMaxBufferLength: isMobile ? 20 : 60,
               maxBufferSize: isMobile ? 30 * 1024 * 1024 : 60 * 1024 * 1024,
@@ -1114,26 +1157,27 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               nudgeMaxRetry: 5,
               liveSyncDurationCount: 3,
               liveMaxLatencyDurationCount: 10,
-              capLevelToPlayerSize: isMobile, // Adapt quality to mobile screen viewport size
-              manifestLoadingMaxRetry: 20,
+              capLevelToPlayerSize: isMobile,
+              manifestLoadingMaxRetry: 30,
               manifestLoadingRetryDelay: 1000,
               manifestLoadingMaxRetryTimeout: 60000,
-              levelLoadingMaxRetry: 20,
+              levelLoadingMaxRetry: 30,
               levelLoadingRetryDelay: 1000,
-              fragLoadingMaxRetry: 20,
+              fragLoadingMaxRetry: 30,
               fragLoadingRetryDelay: 1000,
             });
-            hls.loadSource(hlsUrl);
+
+            const cacheBustUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+            hls.loadSource(cacheBustUrl);
             hls.attachMedia(video);
             hlsInstanceRef.current = hls;
 
             hls.on(Hls.Events.MANIFEST_PARSED, (event: any, data: any) => {
               if (!active) return;
-              
-              // Default playback quality = AUTO (ABR)
+              nonFatalErrorCount = 0;
+              isRecoveringRef.current = false;
               hls.currentLevel = -1;
 
-              // On mobile devices, choose initial start level <= 720p to guarantee fast startup without buffering
               if (isMobile && data.levels && data.levels.length > 1) {
                 const defaultMobileIdx = data.levels.findIndex((l: any) => l.height && l.height <= 720 && l.height >= 480);
                 if (defaultMobileIdx !== -1) {
@@ -1141,22 +1185,67 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 }
               }
 
-              video.play().catch(e => console.log('Autoplay blocked, attempting muted play:', e));
+              safePlayVideo(video);
 
-              // Parse available variant streams from master playlist for quality selector
               const levels = data.levels.map((l: any) => {
-                if (l.height && l.height > 0) {
-                  return `${l.height}p`;
-                }
+                if (l.height && l.height > 0) return `${l.height}p`;
                 return 'Original';
               });
               const uniqueLevels = Array.from(new Set(levels));
               setQualityLevels(['Auto', ...uniqueLevels]);
             });
 
+            const triggerAutoRecovery = () => {
+              if (!active || isRecoveringRef.current) return;
+              isRecoveringRef.current = true;
+              console.log('[HLS Recovery Engine] Proactively polling for stream playlist recovery...');
+
+              if (hlsInstanceRef.current) {
+                try {
+                  hlsInstanceRef.current.detachMedia();
+                  hlsInstanceRef.current.destroy();
+                } catch (_) {}
+                hlsInstanceRef.current = null;
+              }
+
+              if (videoRef.current) {
+                resetVideoElement(videoRef.current);
+              }
+
+              if (recoveryTimer) clearInterval(recoveryTimer);
+
+              const checkAndResume = async () => {
+                if (!active) {
+                  if (recoveryTimer) clearInterval(recoveryTimer);
+                  isRecoveringRef.current = false;
+                  return;
+                }
+                try {
+                  const checkUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+                  const res = await fetch(checkUrl, { method: 'GET', cache: 'no-store' });
+                  if (res.ok) {
+                    const text = await res.text();
+                    if (text && text.includes('#EXTM3U')) {
+                      console.log('[HLS Recovery Engine] Stream playlist active! Re-attaching and auto-resuming playback...');
+                      if (recoveryTimer) clearInterval(recoveryTimer);
+                      isRecoveringRef.current = false;
+                      initPlayer();
+                    }
+                  }
+                } catch (e) {
+                  // Keep polling until OBS stream is active again
+                }
+              };
+
+              checkAndResume();
+              recoveryTimer = setInterval(checkAndResume, 1000);
+            };
+
             hls.on(Hls.Events.ERROR, (event: any, data: any) => {
+              if (!active) return;
+
               if (data.fatal) {
-                console.warn(`[HLS Engine] Fatal player error detected (${data.type}), starting automatic recovery...`);
+                console.warn(`[HLS Engine] Fatal player error detected (${data.type}, ${data.details}), starting automatic recovery...`);
                 switch (data.type) {
                   case Hls.ErrorTypes.MEDIA_ERROR:
                     console.warn('[HLS Engine] Media error encountered, recovering media buffer...');
@@ -1171,47 +1260,45 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                     triggerAutoRecovery();
                     break;
                 }
-              }
-            });
-
-            const triggerAutoRecovery = () => {
-              if (!active) return;
-              console.log('[HLS Recovery Engine] Proactively polling for stream playlist recovery...');
-              if (hlsInstanceRef.current) {
-                try { hlsInstanceRef.current.destroy(); } catch (_) {}
-                hlsInstanceRef.current = null;
-              }
-
-              if (retryTimer) clearInterval(retryTimer);
-
-              const checkAndResume = async () => {
-                if (!active) {
-                  if (retryTimer) clearInterval(retryTimer);
-                  return;
-                }
-                try {
-                  const res = await fetch(`${hlsUrl}?t=${Date.now()}`, { method: 'GET', cache: 'no-store' });
-                  if (res.ok) {
-                    const text = await res.text();
-                    if (text && text.includes('#EXTM3U')) {
-                      console.log('[HLS Recovery Engine] Stream playlist active! Re-attaching and auto-resuming playback...');
-                      if (retryTimer) clearInterval(retryTimer);
-                      initPlayer();
-                    }
+              } else {
+                if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                  nonFatalErrorCount++;
+                  if (nonFatalErrorCount > 6) {
+                    console.warn('[HLS Engine] Persistent non-fatal network errors detected, triggering auto-recovery...');
+                    triggerAutoRecovery();
                   }
-                } catch (e) {
-                  // Keep polling until OBS stream is active again
                 }
-              };
-
-              checkAndResume();
-              retryTimer = setInterval(checkAndResume, 1000);
-            };
-          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = hlsUrl;
-            video.addEventListener('loadedmetadata', () => {
-              if (active) video.play().catch(e => console.log('Autoplay blocked:', e));
+              }
             });
+
+            // Monitor video element stall/ended/error events
+            const handleStallOrEnd = () => {
+              if (!active) return;
+              console.warn('[HLS Engine] Video element stalled or ended during live playback, checking stream status...');
+              triggerAutoRecovery();
+            };
+
+            video.addEventListener('ended', handleStallOrEnd);
+            video.addEventListener('error', handleStallOrEnd);
+
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            const cacheBustUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+            video.src = cacheBustUrl;
+            video.addEventListener('loadedmetadata', () => {
+              if (active) safePlayVideo(video);
+            });
+
+            const handleNativeError = () => {
+              if (!active) return;
+              setTimeout(() => {
+                video.src = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+                video.load();
+                safePlayVideo(video);
+              }, 1500);
+            };
+
+            video.addEventListener('error', handleNativeError);
+            video.addEventListener('ended', handleNativeError);
           }
         } catch (err) {
           console.error('HLS load error:', err);
@@ -1234,6 +1321,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 const bitrates = player.getBitrateInfoListFor('video').map((b: any) => `${b.height}p`);
                 setQualityLevels(['Auto', ...bitrates]);
               }
+              safePlayVideo(video);
             });
           }
         } catch (err) {
@@ -1246,17 +1334,80 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
     return () => {
       active = false;
-      if (retryTimer) clearTimeout(retryTimer);
+      isRecoveringRef.current = false;
+      if (recoveryTimer) clearInterval(recoveryTimer);
       if (hlsInstanceRef.current) {
-        hlsInstanceRef.current.destroy();
+        try {
+          hlsInstanceRef.current.detachMedia();
+          hlsInstanceRef.current.destroy();
+        } catch (_) {}
         hlsInstanceRef.current = null;
       }
       if (dashPlayerRef.current) {
-        dashPlayerRef.current.destroy();
+        try {
+          dashPlayerRef.current.destroy();
+        } catch (_) {}
         dashPlayerRef.current = null;
       }
     };
   }, [isPlaying, playerProtocol, hlsUrl, dashUrl, stream.status]);
+
+  // Proactive Playback Auto-Resume & Continuity Watchdog
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const watchdogTimer = setInterval(() => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      // If stream is live and video is paused (and not currently recovering), auto-resume
+      if (stream.status === 'live' && video.paused && !isRecoveringRef.current && video.readyState >= 2) {
+        console.log('[Stream Watchdog] Stream is live but player paused, auto-resuming playback...');
+        safePlayVideo(video);
+      }
+
+      // If video has errored or unloaded during live status, recover
+      if (stream.status === 'live' && (video.error || video.readyState === 0) && !isRecoveringRef.current) {
+        console.warn('[Stream Watchdog] Video element in error/unloaded state during live stream, re-initializing player...');
+        if (hlsInstanceRef.current) {
+          try {
+            hlsInstanceRef.current.detachMedia();
+            hlsInstanceRef.current.destroy();
+          } catch (_) {}
+          hlsInstanceRef.current = null;
+        }
+        resetVideoElement(video);
+        isRecoveringRef.current = false;
+      }
+    }, 1500);
+
+    return () => clearInterval(watchdogTimer);
+  }, [isPlaying, stream.status, hlsUrl]);
+
+  // Proactive Offline-to-Live Auto-Start Monitor
+  useEffect(() => {
+    if (!isPlaying || stream.status === 'live') return;
+
+    const pollTimer = setInterval(async () => {
+      try {
+        const checkUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        const res = await fetch(checkUrl, { method: 'GET', cache: 'no-store' });
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.includes('#EXTM3U')) {
+            console.log('[Stream Watchdog] Detected active live HLS playlist while offline, auto-triggering live state...');
+            if (onGoLive) {
+              onGoLive();
+            }
+          }
+        }
+      } catch (e) {
+        // Stream still offline
+      }
+    }, 1200);
+
+    return () => clearInterval(pollTimer);
+  }, [isPlaying, stream.status, hlsUrl, onGoLive]);
 
   // Adjust volume dynamically
   useEffect(() => {
