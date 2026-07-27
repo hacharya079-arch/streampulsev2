@@ -1271,15 +1271,35 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 }
               }
 
-              safePlayVideo(video);
-
               const levels = data.levels.map((l: any) => {
                 if (l.height && l.height > 0) return `${l.height}p`;
                 return 'Original';
               });
               const uniqueLevels = Array.from(new Set(levels));
               setQualityLevels(['Auto', ...uniqueLevels]);
+
+              // Trigger initial playback request
+              safePlayVideo(video);
             });
+
+            // Listen for first fragment buffered to resume playback once media frame is ready
+            let fragBufferedCount = 0;
+            hls.on(Hls.Events.FRAG_BUFFERED, () => {
+              if (!active) return;
+              fragBufferedCount++;
+              if (video.paused && stream.status === 'live') {
+                safePlayVideo(video);
+              }
+            });
+
+            const handleCanPlay = () => {
+              if (!active) return;
+              if (video.paused && stream.status === 'live') {
+                safePlayVideo(video);
+              }
+            };
+            video.addEventListener('canplay', handleCanPlay);
+            video.addEventListener('loadeddata', handleCanPlay);
 
             const triggerAutoRecovery = () => {
               if (!active || isRecoveringRef.current) return;
@@ -1447,7 +1467,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       if (!video) return;
 
       // If stream is live and video is paused (and not currently recovering), auto-resume
-      if (stream.status === 'live' && video.paused && !isRecoveringRef.current && video.readyState >= 2) {
+      if (stream.status === 'live' && video.paused && !isRecoveringRef.current) {
         console.log('[Stream Watchdog] Stream is live but player paused, auto-resuming playback...');
         safePlayVideo(video);
       }
@@ -1697,18 +1717,19 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     <div className={`bg-zinc-900 rounded-xl overflow-hidden border transition-all group shadow-xl flex flex-col h-full relative ${isMonitoring ? 'ring-2 ring-blue-500 border-blue-500/50' : 'border-zinc-800 hover:border-zinc-700'} ${stream.status === 'scheduled' ? 'opacity-90' : ''}`}>
       {/* Video Container */}
       <div ref={playerContainerRef} className="relative aspect-video bg-black flex items-center justify-center overflow-hidden shrink-0">
+        {/* Persistent Video Element so videoRef is retained for clean buffer flush on stream stop */}
+        <video 
+          ref={videoRef}
+          className={`w-full h-full object-contain ${stream.status === 'live' && isPlaying ? 'block' : 'hidden'}`}
+          playsInline
+          autoPlay
+          controls={false}
+        />
+
         {stream.status === 'live' ? (
           <div className="relative w-full h-full overflow-hidden">
             {isPlaying ? (
               <div className="relative w-full h-full bg-black group/player select-none">
-                <video 
-                  ref={videoRef}
-                  className="w-full h-full object-contain"
-                  playsInline
-                  autoPlay
-                  controls={false}
-                />
-                
                 {/* Always-accessible top-right fullscreen button */}
                 <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/player:opacity-100 transition-opacity duration-300">
                   <button
