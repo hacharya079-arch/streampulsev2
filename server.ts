@@ -880,33 +880,48 @@ segment3.ts
   });
 
   app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    const loginIdentifier = (req.body.username || req.body.email || req.body.identifier || '').toString().trim();
+    const rawPassword = req.body.password ? String(req.body.password) : '';
+
+    if (!loginIdentifier || !rawPassword) {
+      console.warn(`[Auth API] Login attempt rejected: Missing ${!loginIdentifier ? 'username/email identifier' : 'password'} in payload.`);
+      return res.status(400).json({ error: 'Username or email and password are required' });
     }
 
     try {
-      const cleanUsername = String(username).trim();
-      const rawPassword = String(password);
-
-      const user = await db.getUserByUsername(cleanUsername);
+      const user = await db.getUserByUsername(loginIdentifier);
       if (!user) {
+        console.warn(`[Auth API] Login failed [User Lookup]: No user found matching identifier "${loginIdentifier}".`);
         return res.status(400).json({ error: 'Invalid username or password' });
       }
 
       if (user.status === 'disabled') {
+        console.warn(`[Auth API] Login failed [Status Check]: User "${user.username}" (ID: ${user.id}) account is disabled.`);
         return res.status(403).json({ error: 'Access denied: Your account is currently disabled' });
       }
 
-      const isMatch = await bcrypt.compare(rawPassword, user.password_hash);
+      let isMatch = false;
+      try {
+        isMatch = await bcrypt.compare(rawPassword, user.password_hash);
+      } catch (bcryptErr) {
+        console.error(`[Auth API] Login failed [Password Comparison Error]: Error comparing hash for user "${user.username}":`, bcryptErr);
+      }
+
       if (!isMatch) {
+        console.warn(`[Auth API] Login failed [Password Comparison]: Password mismatch for user "${user.username}".`);
         return res.status(400).json({ error: 'Invalid username or password' });
       }
 
       // Record user login details
       await db.recordUserLogin(user.id, req.ip || '0.0.0.0');
 
-      const token = jwt.sign({ id: Number(user.id), username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+      let token: string;
+      try {
+        token = jwt.sign({ id: Number(user.id), username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+      } catch (jwtErr) {
+        console.error(`[Auth API] Login failed [JWT Creation]: Failed to sign JWT for user "${user.username}":`, jwtErr);
+        return res.status(500).json({ error: 'Server error during token generation' });
+      }
 
       res.json({
         token,
@@ -922,7 +937,7 @@ segment3.ts
         }
       });
     } catch (err) {
-      console.error('Login error:', err);
+      console.error('[Auth API] Login failed [Server Exception]: Unexpected error during login process:', err);
       res.status(500).json({ error: 'Server error during login' });
     }
   });
