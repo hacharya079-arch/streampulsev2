@@ -1002,48 +1002,39 @@ segment3.ts
       const cleanUsername = username.trim();
       const cleanEmail = email.trim();
 
-      const existingUser = await db.getUserByUsername(cleanUsername);
-      if (existingUser) {
-        if (existingUser.username.toLowerCase() === cleanUsername.toLowerCase()) {
-          return res.status(400).json({ error: 'Username already exists' });
-        }
-        if (existingUser.email.toLowerCase() === cleanEmail.toLowerCase()) {
-          return res.status(400).json({ error: 'Email address already in use' });
-        }
+      const existingUserByUsername = await db.getUserByUsername(cleanUsername);
+      if (existingUserByUsername && existingUserByUsername.username.toLowerCase() === cleanUsername.toLowerCase()) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+
+      const existingUserByEmail = await db.getUserByUsername(cleanEmail);
+      if (existingUserByEmail && existingUserByEmail.email.toLowerCase() === cleanEmail.toLowerCase()) {
+        return res.status(400).json({ error: 'Email address already in use' });
       }
 
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(password, salt);
 
       const userRole = (role === 'admin' || role === 'user') ? role : 'user';
-      const newUser = await db.createUser(cleanUsername, cleanEmail, passwordHash, userRole);
-      
-      const updates: Partial<any> = {};
-      if (assigned_stream_id) {
-        updates.assigned_stream_id = assigned_stream_id;
-      }
-      if (display_name) {
-        updates.display_name = display_name;
-      } else {
-        updates.display_name = username;
-      }
-
-      if (Object.keys(updates).length > 0) {
-        await db.updateUser(newUser.id, updates);
-      }
-
-      const finalUser = await db.getUserById(newUser.id);
-      const rUser = finalUser || newUser;
+      const finalDisplayName = display_name || cleanUsername;
+      const newUser = await db.createUser(
+        cleanUsername,
+        cleanEmail,
+        passwordHash,
+        userRole,
+        assigned_stream_id || null,
+        finalDisplayName
+      );
 
       res.status(201).json({
-        id: rUser.id,
-        username: rUser.username,
-        email: rUser.email,
-        role: rUser.role,
-        created_at: rUser.created_at,
-        status: rUser.status || 'enabled',
-        assigned_stream_id: rUser.assigned_stream_id || null,
-        display_name: rUser.display_name || rUser.username
+        id: newUser.id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role,
+        created_at: newUser.created_at,
+        status: newUser.status || 'enabled',
+        assigned_stream_id: newUser.assigned_stream_id || null,
+        display_name: newUser.display_name || newUser.username
       });
     } catch (err) {
       console.error('Error creating user:', err);
@@ -3974,10 +3965,12 @@ segment3.ts
       const users = await db.getUsers();
       if (!users || users.length === 0) {
         console.log('[Boot Init] No users found. Initializing default administrator account...');
+        const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+        const adminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
         const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash('admin123', salt);
-        await db.createUser('admin', 'admin@streampulse.io', hash, 'admin');
-        console.log('[Boot Init] Default admin user created (Username: admin)');
+        const hash = await bcrypt.hash(adminPassword, salt);
+        await db.createUser(adminUsername, `${adminUsername}@streampulse.io`, hash, 'admin');
+        console.log(`[Boot Init] Default admin user created (Username: ${adminUsername})`);
       }
 
       const detected = await detectPublicIp();

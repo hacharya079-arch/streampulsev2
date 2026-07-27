@@ -231,6 +231,7 @@ if (fs.existsSync(JSON_DB_PATH)) {
 // Helper to verify bcrypt hash format
 function isValidBcryptHash(hash: string): boolean {
   if (typeof hash !== 'string') return false;
+  // Standard bcrypt string length is 60 chars starting with $2a$, $2b$, or $2y$
   const bcryptRegex = /^\$2[ayb]\$[0-9]{2}\$[A-Za-z0-9./]{53}$/;
   return bcryptRegex.test(hash);
 }
@@ -535,19 +536,27 @@ export const db = {
             // An administrator exists - verify the password hash
             const currentHash = targetAdmin.password_hash;
             const isCorrupted = !isValidBcryptHash(currentHash);
-            
+            let matchesPassword = false;
+            if (!isCorrupted && currentHash) {
+              try {
+                matchesPassword = await bcrypt.compare(adminPassword, currentHash);
+              } catch (_) {
+                matchesPassword = false;
+              }
+            }
+
             if (isCorrupted) {
               console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
             }
 
-            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
+            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash || !matchesPassword) {
               const salt = await bcrypt.genSalt(10);
               const passwordHash = await bcrypt.hash(adminPassword, salt);
               await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, targetAdmin.id]);
               if (resetRequested) {
                 console.log(`Admin password reset completed.`);
               } else {
-                console.log(`Admin password repair completed.`);
+                console.log(`Admin password repair/sync completed.`);
               }
             } else {
               console.log(`Existing admin detected.`);
@@ -561,7 +570,7 @@ export const db = {
       }
     } else {
       // JSON storage mode audit & verification
-      const existingAdminByUsername = localState.users.find(u => u.username.toLowerCase() === adminUsername.toLowerCase());
+      const existingAdminByUsername = localState.users.find(u => (u.username || '').toLowerCase() === adminUsername.toLowerCase());
       const existingAdminByRole = localState.users.find(u => u.role === 'admin');
 
       let targetAdmin = existingAdminByUsername;
@@ -589,12 +598,20 @@ export const db = {
         // An administrator exists - verify the password hash
         const currentHash = targetAdmin.password_hash;
         const isCorrupted = !isValidBcryptHash(currentHash);
+        let matchesPassword = false;
+        if (!isCorrupted && currentHash) {
+          try {
+            matchesPassword = bcrypt.compareSync(adminPassword, currentHash);
+          } catch (_) {
+            matchesPassword = false;
+          }
+        }
 
         if (isCorrupted) {
           console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
         }
 
-        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
+        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash || !matchesPassword) {
           const salt = bcrypt.genSaltSync(10);
           const passwordHash = bcrypt.hashSync(adminPassword, salt);
           targetAdmin.password_hash = passwordHash;
@@ -602,7 +619,7 @@ export const db = {
           if (resetRequested) {
             console.log(`Admin password reset completed.`);
           } else {
-            console.log(`Admin password repair completed.`);
+            console.log(`Admin password repair/sync completed.`);
           }
         } else {
           console.log(`Existing admin detected.`);
@@ -638,7 +655,7 @@ export const db = {
       };
     }
     const user = localState.users.find(
-      u => u.username.trim().toLowerCase() === clean || u.email.trim().toLowerCase() === clean
+      u => (u.username ? u.username.trim().toLowerCase() : '') === clean || (u.email ? u.email.trim().toLowerCase() : '') === clean
     );
     return user || null;
   },
@@ -685,13 +702,22 @@ export const db = {
     return localState.users;
   },
 
-  createUser: async (username: string, email: string, passwordHash: string, role: 'admin' | 'user' = 'user'): Promise<UserRecord> => {
+  createUser: async (
+    username: string,
+    email: string,
+    passwordHash: string,
+    role: 'admin' | 'user' = 'user',
+    assignedStreamId: string | null = null,
+    displayName: string | null = null
+  ): Promise<UserRecord> => {
     const cleanUsername = username.trim();
     const cleanEmail = email.trim();
+    const finalDisplayName = displayName && displayName.trim() ? displayName.trim() : cleanUsername;
+
     if (usePostgres && pgPool) {
       const res = await pgPool.query(
         'INSERT INTO users (username, email, password_hash, role, status, assigned_stream_id, login_history, display_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-        [cleanUsername, cleanEmail, passwordHash, role, 'enabled', null, null, cleanUsername]
+        [cleanUsername, cleanEmail, passwordHash, role, 'enabled', assignedStreamId, null, finalDisplayName]
       );
       const r = res.rows[0];
       return {
@@ -715,9 +741,9 @@ export const db = {
       role,
       created_at: new Date().toISOString(),
       status: 'enabled',
-      assigned_stream_id: null,
+      assigned_stream_id: assignedStreamId,
       login_history: null,
-      display_name: cleanUsername
+      display_name: finalDisplayName
     };
     localState.users.push(newUser);
     saveLocalState();

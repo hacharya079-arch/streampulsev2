@@ -1,23 +1,52 @@
 {
   "users": [
     {
-      "id": 1,
-      "username": "admin",
-      "email": "admin@streampulse.io",
-      "password_hash": "$2b$10$hCybAlqIlJikpptMNPU84ecdUS4Pl6lzIz2lEo/gbUCLNxjs31B6u",
-      "role": "admin",
-      "created_at": "2026-06-27T08:55:55.689Z"
-    },
-    {
       "id": 2,
       "username": "himakara",
       "email": "hacharya079@gmail.com",
-      "password_hash": "$2b$10$1k2Qf3/ObH15vdQdTySweeqqCtONJxTWpnvi8LauQuGp6FYxBIzO.",
+      "password_hash": "$2b$10$d1M.n9Xhpv1PkxXkH47wQuEjRKksjyVoRzuI5XSnOoBQ1immNo926",
       "role": "admin",
       "created_at": "2026-06-27T08:56:27.753Z",
       "status": "enabled",
       "assigned_stream_id": null,
-      "display_name": "himakara"
+      "display_name": "himakara",
+      "login_history": "[{\"timestamp\":\"2026-07-27T13:38:35.467Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:28.119Z\",\"ip\":\"127.0.0.1\"}]"
+    },
+    {
+      "id": 3,
+      "username": "admin",
+      "email": "admin@streampulse.io",
+      "password_hash": "$2b$10$j59EGZDNYnyLIOloRWz.jOaUHjHiE7gEw8TqcJhA1AZWa54UB5Z6a",
+      "role": "admin",
+      "created_at": "2026-07-27T13:32:32.038Z",
+      "status": "enabled",
+      "assigned_stream_id": null,
+      "login_history": "[{\"timestamp\":\"2026-07-27T13:38:35.354Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:09.625Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:32:47.952Z\",\"ip\":\"127.0.0.1\"}]",
+      "display_name": "admin"
+    },
+    {
+      "id": 4,
+      "username": "test_broadcaster_9637",
+      "email": "test_broadcaster_9637@example.com",
+      "password_hash": "$2b$10$bntEIwBa7N3drB34TuzUCuJAre0nP.XQuU6g1Z1Tvif/h8d03Wwc.",
+      "role": "user",
+      "created_at": "2026-07-27T13:38:09.741Z",
+      "status": "enabled",
+      "assigned_stream_id": null,
+      "login_history": "[{\"timestamp\":\"2026-07-27T13:38:09.949Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:09.845Z\",\"ip\":\"127.0.0.1\"}]",
+      "display_name": "Test Broadcaster"
+    },
+    {
+      "id": 5,
+      "username": "streamer_5470",
+      "email": "streamer_5470@test.com",
+      "password_hash": "$2b$10$qO82AjwROGnzvve0A51k0OXQaM38yk5qr3tqolhJ2gjoJFfutuHGO",
+      "role": "user",
+      "created_at": "2026-07-27T13:38:35.574Z",
+      "status": "enabled",
+      "assigned_stream_id": null,
+      "login_history": "[{\"timestamp\":\"2026-07-27T13:38:35.778Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:35.675Z\",\"ip\":\"127.0.0.1\"}]",
+      "display_name": "Streamer One"
     }
   ],
   "streams": [
@@ -38,11 +67,11 @@
     },
     {
       "id": "1",
-      "userId": 1,
+      "userId": 0,
       "title": "Late Night Coding Sessions",
       "broadcaster": "dev_alex",
-      "viewers": 1240,
-      "status": "live",
+      "viewers": 0,
+      "status": "offline",
       "startTime": "2026-06-27T08:55:55.689Z",
       "rtmpUrl": "rtmp://localhost/live",
       "streamKey": "alex_secure_123",
@@ -53,7 +82,7 @@
     },
     {
       "id": "2",
-      "userId": 1,
+      "userId": 0,
       "title": "E-Sports Tournament Qualifiers",
       "proadcaster": "pro_gaming_tv",
       "viewers": 0,
@@ -72,5 +101,9 @@
   "deviceGroupMembers": [],
   "playbackHistory": [],
   "deviceLogs": [],
-  "deviceSchedules": []
+  "deviceSchedules": [],
+  "appSettings": {
+    "server_settings": "{\"deploymentMode\":\"auto\",\"customDomain\":\"\",\"manualIp\":\"\",\"setupCompleted\":true,\"ssl\":{\"installed\":false,\"status\":\"none\",\"expirationDate\":\"\",\"issuer\":\"\",\"httpsStatus\":\"disabled\"},\"streaming\":{\"rtmpPort\":1935,\"httpPort\":3000,\"httpsPort\":443,\"hlsSegmentDuration\":4,\"playlistLength\":5,\"recordingEnabled\":false,\"ffmpegProfiles\":{\"1080p\":true,\"720p\":true,\"480p\":true,\"360p\":true}},\"lastDetectedPublicIp\":\"34.34.244.76\",\"timezone\":\"Asia/Calcutta\"}",
+    "dashboard_preferences": "{\"activeTab\":\"dashboard\",\"manualIp\":\"\",\"customDomain\":\"\",\"creationIpMode\":\"auto\",\"deploymentMode\":\"auto\"}"
+  }
 }
