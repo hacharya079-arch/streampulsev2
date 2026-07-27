@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { CopyButton } from './CopyButton';
 import { 
   RefreshCcw, 
@@ -226,12 +226,88 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   };
 
+  // Saved baseline refs for tracking unsaved/dirty state across tabs
+  const initialNetworkRef = useRef<{ deploymentMode: string; customDomain: string } | null>(null);
+  const initialStreamingRef = useRef<any>(null);
+
+  // Initialize network baseline on first render/prop load
+  useEffect(() => {
+    if (initialNetworkRef.current === null) {
+      initialNetworkRef.current = {
+        deploymentMode: deploymentMode || 'auto',
+        customDomain: customDomain || ''
+      };
+    }
+  }, [deploymentMode, customDomain]);
+
+  // Dirty state checks for configuration categories
+  const isNetworkDirty = useMemo(() => {
+    if (!initialNetworkRef.current) return false;
+    return (
+      deploymentMode !== initialNetworkRef.current.deploymentMode ||
+      customDomain !== initialNetworkRef.current.customDomain
+    );
+  }, [deploymentMode, customDomain]);
+
+  const isStreamingDirty = useMemo(() => {
+    if (!initialStreamingRef.current) return false;
+    return JSON.stringify(streamingParams) !== JSON.stringify(initialStreamingRef.current);
+  }, [streamingParams]);
+
+  const isAdminSecurityDirty = useMemo(() => {
+    return Boolean(newAdminUsername.trim() || newAdminPassword.trim() || confirmAdminPassword.trim());
+  }, [newAdminUsername, newAdminPassword, confirmAdminPassword]);
+
+  const isTeamSecurityDirty = useMemo(() => {
+    return Boolean(adminTargetUser && (adminUserPassword.trim() || adminForceReset));
+  }, [adminTargetUser, adminUserPassword, adminForceReset]);
+
+  // Explicit Save handlers
+  const onSaveNetworkClick = async () => {
+    setActionLoading(true);
+    try {
+      await handleApplyNetworkChanges();
+      initialNetworkRef.current = {
+        deploymentMode,
+        customDomain
+      };
+      setNetworkSuccess('Settings Saved Successfully');
+      showBannerMessage('Settings Saved Successfully');
+    } catch (err: any) {
+      showBannerMessage(null, err.message || 'Failed to save network configuration');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const onSaveStreamingClick = async () => {
+    setActionLoading(true);
+    try {
+      const res = await fetchWithAuth('/api/settings/streaming', {
+        method: 'POST',
+        body: JSON.stringify(streamingParams)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        initialStreamingRef.current = JSON.parse(JSON.stringify(streamingParams));
+        showBannerMessage('Settings Saved Successfully');
+      } else {
+        showBannerMessage(null, data.error || 'Failed to save streaming configuration.');
+      }
+    } catch (e: any) {
+      showBannerMessage(null, 'Streaming parameters upload failed: ' + e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const fetchStreamingParams = async () => {
     try {
       const res = await fetchWithAuth('/api/settings/streaming');
       if (res.ok) {
         const data = await res.json();
         setStreamingParams(data);
+        initialStreamingRef.current = JSON.parse(JSON.stringify(data));
       }
     } catch (e) {
       console.error('Failed to load Streaming properties:', e);
@@ -560,12 +636,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </button>
           <button
             id="save-network-changes-btn"
-            onClick={handleApplyNetworkChanges}
-            disabled={networkLoading || actionLoading}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50"
+            onClick={onSaveNetworkClick}
+            disabled={!isNetworkDirty || networkLoading || actionLoading}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              isNetworkDirty 
+                ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer shadow-md ring-1 ring-blue-400' 
+                : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50'
+            }`}
+            title={isNetworkDirty ? "Save Network Settings" : "No unsaved network changes"}
           >
             <Save className="w-3.5 h-3.5" />
-            Apply Changes
+            {isNetworkDirty ? 'Save Network Settings' : 'Settings Saved'}
           </button>
         </div>
       </div>
@@ -972,10 +1053,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </div>
                   <button
                     type="submit"
-                    disabled={securityLoading}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 rounded-lg transition disabled:opacity-50"
+                    disabled={!isAdminSecurityDirty || securityLoading}
+                    className={`w-full text-xs font-semibold py-2 rounded-lg transition-all ${
+                      isAdminSecurityDirty && (!newAdminPassword || newAdminPassword === confirmAdminPassword)
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-md' 
+                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50'
+                    }`}
                   >
-                    {securityLoading ? 'Updating...' : 'Update Credentials'}
+                    {securityLoading ? 'Updating...' : isAdminSecurityDirty ? 'Save Security Changes' : 'No Unsaved Security Changes'}
                   </button>
                 </form>
               </div>
@@ -1030,10 +1115,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                     <button
                       type="submit"
-                      disabled={securityLoading}
-                      className="w-full bg-red-950/30 hover:bg-red-900/20 border border-red-900/30 text-red-400 text-xs font-semibold py-2 rounded-lg transition"
+                      disabled={!isTeamSecurityDirty || securityLoading}
+                      className={`w-full text-xs font-semibold py-2 rounded-lg transition-all ${
+                        isTeamSecurityDirty
+                          ? 'bg-red-600 hover:bg-red-500 text-white cursor-pointer shadow-md' 
+                          : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50'
+                      }`}
                     >
-                      Apply Security Lock
+                      {securityLoading ? 'Saving...' : isTeamSecurityDirty ? 'Save Security Lock' : 'No User Changes'}
                     </button>
                   </form>
                 </div>
@@ -1149,11 +1238,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 <div className="pt-2">
                   <button
-                    onClick={handleSaveStreaming}
-                    disabled={actionLoading}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2 rounded-lg transition"
+                    onClick={onSaveStreamingClick}
+                    disabled={!isStreamingDirty || actionLoading}
+                    className={`w-full text-xs font-semibold py-2 rounded-lg transition-all ${
+                      isStreamingDirty 
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer shadow-md ring-1 ring-blue-400' 
+                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50'
+                    }`}
+                    title={isStreamingDirty ? "Save Streaming Engine Configuration" : "No unsaved streaming changes"}
                   >
-                    Save Streaming Engine Configuration
+                    {isStreamingDirty ? 'Save Streaming Engine Configuration' : 'Streaming Settings Saved'}
                   </button>
                 </div>
               </div>

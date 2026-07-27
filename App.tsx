@@ -833,13 +833,7 @@ CREATE TABLE IF NOT EXISTS streams (
     return () => clearInterval(interval);
   }, [token, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
 
-  useEffect(() => {
-    if (!preferencesLoaded || !token) return;
-    const timer = setTimeout(() => {
-      saveUserPreferences();
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [preferencesLoaded, token, activeTab, manualIp, customDomain, creationIpMode, deploymentMode, saveUserPreferences]);
+  // Removed auto-save useEffect to enforce explicit Save button functionality as required.
 
   // Handle Stream Creation via API
   const handleCreateStream = async () => {

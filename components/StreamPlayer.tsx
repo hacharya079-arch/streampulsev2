@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { copyToClipboard as copyToClipboardUtil } from '../utils/clipboard';
 import { CopyButton } from './CopyButton';
 import { 
@@ -755,6 +755,63 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     setProfilesList(newList);
   };
 
+  const getStreamConfigSnapshot = useCallback(() => {
+    return JSON.stringify({
+      selectedResolution,
+      customWidth: Number(customWidth),
+      customHeight: Number(customHeight),
+      customFps: Number(customFps),
+      customBitrate: Number(customBitrate),
+      customAudioBitrate: Number(customAudioBitrate),
+      customAspectRatio,
+      customVideoCodec,
+      customAudioCodec,
+      customPreset,
+      customProfile,
+      customPixelFormat,
+      customEnabledProfiles,
+      customGopSize: Number(customGopSize),
+      customBufferSize: Number(customBufferSize),
+      customMaxBitrate: Number(customMaxBitrate),
+      customScalingAlgorithm,
+      customAudioEnabled,
+      customAudioSampleRate: Number(customAudioSampleRate),
+      customAudioChannels,
+      customAudioVolume: Number(customAudioVolume),
+      customAudioNormalize,
+      customAudioNoiseReduction,
+      customAudioDelay: Number(customAudioDelay),
+      customAudioLanguage,
+      customAudioTrackSelection,
+      customAudioPassthrough,
+      customAudioTranscoding,
+      profilesList
+    });
+  }, [
+    selectedResolution, customWidth, customHeight, customFps, customBitrate,
+    customAudioBitrate, customAspectRatio, customVideoCodec, customAudioCodec,
+    customPreset, customProfile, customPixelFormat, customEnabledProfiles,
+    customGopSize, customBufferSize, customMaxBitrate, customScalingAlgorithm,
+    customAudioEnabled, customAudioSampleRate, customAudioChannels, customAudioVolume,
+    customAudioNormalize, customAudioNoiseReduction, customAudioDelay,
+    customAudioLanguage, customAudioTrackSelection, customAudioPassthrough,
+    customAudioTranscoding, profilesList
+  ]);
+
+  const initialStreamConfigRef = useRef<string | null>(null);
+  const [saveSuccessNotification, setSaveSuccessNotification] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialStreamConfigRef.current === null) {
+      initialStreamConfigRef.current = getStreamConfigSnapshot();
+    }
+  }, [getStreamConfigSnapshot]);
+
+  const isResolutionConfigDirty = useMemo(() => {
+    if (!initialStreamConfigRef.current) return false;
+    return getStreamConfigSnapshot() !== initialStreamConfigRef.current;
+  }, [getStreamConfigSnapshot]);
+
   const handleSaveResolutionConfig = () => {
     const allErrors: string[] = [];
     profilesList.forEach(p => {
@@ -801,6 +858,12 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
         profilesJson: customProfilesJson
       });
     }
+
+    initialStreamConfigRef.current = getStreamConfigSnapshot();
+    setSaveSuccessNotification('Settings Saved Successfully');
+    setTimeout(() => {
+      setSaveSuccessNotification(null);
+    }, 4000);
   };
 
   const handleResetResolutionConfig = () => {
@@ -3450,15 +3513,27 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                     </div>
                   </div>
 
+                  {saveSuccessNotification && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 animate-in fade-in duration-200">
+                      <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0 text-emerald-400" />
+                      <span>{saveSuccessNotification}</span>
+                    </div>
+                  )}
+
                   {/* Operations Buttons Grid */}
                   <div className="grid grid-cols-5 gap-1 pt-1.5">
                     <button
                       onClick={handleSaveResolutionConfig}
-                      className="px-1.5 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded text-[8px] font-black uppercase tracking-tighter flex flex-col items-center justify-center gap-1 cursor-pointer hover:shadow"
-                      title="Save Configuration"
+                      disabled={!isResolutionConfigDirty}
+                      className={`px-1.5 py-1.5 rounded text-[8px] font-black uppercase tracking-tighter flex flex-col items-center justify-center gap-1 transition-all ${
+                        isResolutionConfigDirty 
+                          ? 'bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white cursor-pointer hover:shadow ring-1 ring-blue-400' 
+                          : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50'
+                      }`}
+                      title={isResolutionConfigDirty ? "Save Configuration" : "No unsaved changes"}
                     >
                       <Save className="w-3.5 h-3.5" />
-                      Save
+                      {isResolutionConfigDirty ? 'Save' : 'Saved'}
                     </button>
                     <button
                       onClick={handleResetResolutionConfig}
