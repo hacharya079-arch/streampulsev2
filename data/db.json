@@ -21,7 +21,7 @@
       "created_at": "2026-07-27T13:32:32.038Z",
       "status": "enabled",
       "assigned_stream_id": null,
-      "login_history": "[{\"timestamp\":\"2026-07-27T15:18:47.014Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T15:18:32.749Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T14:59:16.491Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:48:30.737Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:35.354Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:09.625Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:32:47.952Z\",\"ip\":\"127.0.0.1\"}]",
+      "login_history": "[{\"timestamp\":\"2026-07-27T15:40:15.777Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T15:18:47.014Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T15:18:32.749Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T14:59:16.491Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:48:30.737Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:35.354Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:38:09.625Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T13:32:47.952Z\",\"ip\":\"127.0.0.1\"}]",
       "display_name": "admin"
     },
     {
@@ -59,6 +59,18 @@
       "assigned_stream_id": null,
       "login_history": "[{\"timestamp\":\"2026-07-27T15:18:47.270Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T15:18:47.140Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T15:18:32.958Z\",\"ip\":\"127.0.0.1\"}]",
       "display_name": "Test Operator"
+    },
+    {
+      "id": 7,
+      "username": "broad_user_99",
+      "email": "broad_user_99@example.com",
+      "password_hash": "$2b$10$pul78HWaoxXsSdljDmAgw.blRLEjz4Y.53arY7YwVEOx6GM84nftW",
+      "role": "user",
+      "created_at": "2026-07-27T15:40:15.916Z",
+      "status": "enabled",
+      "assigned_stream_id": null,
+      "login_history": "[{\"timestamp\":\"2026-07-27T15:40:16.140Z\",\"ip\":\"127.0.0.1\"},{\"timestamp\":\"2026-07-27T15:40:16.024Z\",\"ip\":\"127.0.0.1\"}]",
+      "display_name": "broad_user_99"
     }
   ],
   "streams": [
