@@ -1064,26 +1064,48 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     : (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}/dash/${stream.streamKey}/manifest.mpd` : 'Endpoint unavailable');
   const embedUrl = stream.playbackUrls?.embed || 'Endpoint unavailable';
 
-  // Automatically trigger active playback state when stream transitions to live
+  // Automatically trigger active playback state when stream transitions to live, or flush video buffer on offline
   useEffect(() => {
     if (stream.status === 'live') {
       setIsPlaying(true);
+    } else {
+      // Immediate stream loss cleanup: stop video, flush buffer, destroy player instance
+      if (hlsInstanceRef.current) {
+        try {
+          hlsInstanceRef.current.stopLoad();
+          hlsInstanceRef.current.detachMedia();
+          hlsInstanceRef.current.destroy();
+        } catch (_) {}
+        hlsInstanceRef.current = null;
+      }
+      if (dashPlayerRef.current) {
+        try {
+          dashPlayerRef.current.destroy();
+        } catch (_) {}
+        dashPlayerRef.current = null;
+      }
+      if (videoRef.current) {
+        resetVideoElement(videoRef.current);
+      }
     }
   }, [stream.status]);
 
   // Ref to track whether recovery polling is active
   const isRecoveringRef = useRef<boolean>(false);
 
-  // Helper to safely execute play with muted fallback if browser blocks unmuted play
+  // Helper to safely execute play with muted fallback if browser blocks unmuted play (NEVER set volume state to 0)
   const safePlayVideo = async (video: HTMLVideoElement) => {
+    if (!video) return;
+    video.volume = volume / 100;
+    video.muted = volume === 0;
+
     try {
       await video.play();
       console.log('[StreamPlayer Engine] Playback started/resumed successfully.');
     } catch (err: any) {
-      console.warn('[StreamPlayer Engine] Unmuted play blocked, attempting muted play:', err);
+      console.warn('[StreamPlayer Engine] Unmuted play blocked by browser, attempting muted play while preserving volume state:', err);
       try {
         video.muted = true;
-        setVolume(0);
         await video.play();
         console.log('[StreamPlayer Engine] Muted playback started successfully.');
       } catch (mutedErr) {
@@ -1096,6 +1118,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   const resetVideoElement = (video: HTMLVideoElement) => {
     try {
       video.pause();
+      video.currentTime = 0;
       video.removeAttribute('src');
       if (video.srcObject) {
         video.srcObject = null;
