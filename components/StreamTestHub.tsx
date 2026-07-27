@@ -788,10 +788,10 @@ export const StreamTestHub: React.FC<StreamTestHubProps> = ({ streams, activeEnd
                 Adaptive Web Player Test Sandbox
               </h3>
 
-              <div className="aspect-video bg-black rounded-xl overflow-hidden relative border border-zinc-800 flex items-center justify-center">
+              <div ref={playerContainerRef} className="aspect-video bg-black rounded-xl overflow-hidden relative border border-zinc-800 flex items-center justify-center">
                 {selectedStream.status === 'live' ? (
                   isPlaying ? (
-                    <div ref={playerContainerRef} className="relative w-full h-full bg-black group/player select-none">
+                    <div className="relative w-full h-full bg-black group/player select-none">
                       <video 
                         ref={videoRef}
                         className="w-full h-full object-contain"

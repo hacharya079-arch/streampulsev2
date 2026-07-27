@@ -1459,11 +1459,11 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   return (
     <div className={`bg-zinc-900 rounded-xl overflow-hidden border transition-all group shadow-xl flex flex-col h-full relative ${isMonitoring ? 'ring-2 ring-blue-500 border-blue-500/50' : 'border-zinc-800 hover:border-zinc-700'} ${stream.status === 'scheduled' ? 'opacity-90' : ''}`}>
       {/* Video Container */}
-      <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden shrink-0">
+      <div ref={playerContainerRef} className="relative aspect-video bg-black flex items-center justify-center overflow-hidden shrink-0">
         {stream.status === 'live' ? (
           <div className="relative w-full h-full overflow-hidden">
             {isPlaying ? (
-              <div ref={playerContainerRef} className="relative w-full h-full bg-black group/player select-none">
+              <div className="relative w-full h-full bg-black group/player select-none">
                 <video 
                   ref={videoRef}
                   className="w-full h-full object-contain"
@@ -2207,10 +2207,10 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (!isPlaying && stream.status === 'live') {
-                setIsPlaying(true);
-                setTimeout(() => toggleFullscreen(), 100);
-              } else {
+              if (stream.status === 'live') {
+                if (!isPlaying) {
+                  setIsPlaying(true);
+                }
                 toggleFullscreen();
               }
             }}
