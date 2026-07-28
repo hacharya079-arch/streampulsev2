@@ -517,8 +517,11 @@ CREATE TABLE IF NOT EXISTS streams (
     const fetchProfile = async () => {
       try {
         const res = await fetchWithNetworkHeaders('/api/auth/me');
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 401) {
           handleLogout();
+          return;
+        }
+        if (res.status === 403) {
           return;
         }
         if (!res.ok) {
@@ -531,7 +534,7 @@ CREATE TABLE IF NOT EXISTS streams (
       }
     };
     fetchProfile();
-  }, [token, fetchWithNetworkHeaders]);
+  }, [token, fetchWithNetworkHeaders, handleLogout]);
 
   // Load IP and Server Stats / Streams / Recordings
   useEffect(() => {
@@ -571,8 +574,11 @@ CREATE TABLE IF NOT EXISTS streams (
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/streams');
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         handleLogout();
+        return;
+      }
+      if (res.status === 403) {
         return;
       }
       if (!res.ok) {
@@ -719,11 +725,14 @@ CREATE TABLE IF NOT EXISTS streams (
   };
 
   const fetchStats = useCallback(async () => {
-    if (!token) return;
+    if (!token || !currentUser || currentUser.role !== 'admin') return;
     try {
       const res = await fetchWithNetworkHeaders('/api/system/stats');
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         handleLogout();
+        return;
+      }
+      if (res.status === 403) {
         return;
       }
       if (!res.ok) {
@@ -734,14 +743,17 @@ CREATE TABLE IF NOT EXISTS streams (
     } catch (err) {
       console.error('Error fetching server stats:', err);
     }
-  }, [token, fetchWithNetworkHeaders, handleLogout]);
+  }, [token, currentUser, fetchWithNetworkHeaders, handleLogout]);
 
   const fetchActionLogs = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/system/logs');
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         handleLogout();
+        return;
+      }
+      if (res.status === 403) {
         return;
       }
       if (!res.ok) {
@@ -758,8 +770,11 @@ CREATE TABLE IF NOT EXISTS streams (
     if (!token) return;
     try {
       const res = await fetchWithNetworkHeaders('/api/network/details');
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         handleLogout();
+        return;
+      }
+      if (res.status === 403) {
         return;
       }
       if (!res.ok) {
@@ -791,7 +806,13 @@ CREATE TABLE IF NOT EXISTS streams (
       if (res.ok) {
         const pref = await safeParseJson(res);
         if (pref && typeof pref === 'object') {
-          if (pref.activeTab) setActiveTab(pref.activeTab);
+          if (pref.activeTab) {
+            if (currentUser?.role === 'user' && pref.activeTab !== 'dashboard') {
+              setActiveTab('dashboard');
+            } else {
+              setActiveTab(pref.activeTab);
+            }
+          }
           if (pref.manualIp) setManualIp(pref.manualIp);
           if (pref.customDomain) setCustomDomain(pref.customDomain);
           if (pref.creationIpMode) setCreationIpMode(pref.creationIpMode);
@@ -803,7 +824,7 @@ CREATE TABLE IF NOT EXISTS streams (
     } finally {
       setPreferencesLoaded(true);
     }
-  }, [token, fetchWithNetworkHeaders, safeParseJson]);
+  }, [token, currentUser, fetchWithNetworkHeaders, safeParseJson]);
 
   const saveUserPreferences = useCallback(async (overrides: Record<string, any> = {}) => {
     if (!token) return;
@@ -830,7 +851,9 @@ CREATE TABLE IF NOT EXISTS streams (
     if (!token) return;
     fetchUserPreferences();
     fetchStreams();
-    fetchStats();
+    if (currentUser?.role === 'admin') {
+      fetchStats();
+    }
     fetchActionLogs();
     fetchNetworkDetails();
 
@@ -859,7 +882,9 @@ CREATE TABLE IF NOT EXISTS streams (
     // Poll server statistics, streams, logs, and network details every 3 seconds as fallback
     const interval = setInterval(() => {
       fetchStreams();
-      fetchStats();
+      if (currentUser?.role === 'admin') {
+        fetchStats();
+      }
       fetchActionLogs();
       fetchNetworkDetails();
     }, 3000);
@@ -872,7 +897,7 @@ CREATE TABLE IF NOT EXISTS streams (
         } catch (_) {}
       }
     };
-  }, [token, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
+  }, [token, currentUser, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
 
   // Removed auto-save useEffect to enforce explicit Save button functionality as required.
 
@@ -2679,7 +2704,7 @@ CREATE TABLE IF NOT EXISTS streams (
             </div>
           )}
 
-          {activeTab === 'streams' && (
+          {activeTab === 'streams' && currentUser?.role === 'admin' && (
             <div className="space-y-6">
               <div className="flex flex-col gap-2">
                 <h2 className="text-2xl sm:text-3xl font-bold">Public Stream Portal</h2>
@@ -2702,13 +2727,13 @@ CREATE TABLE IF NOT EXISTS streams (
 
           {/* Recordings list removed */}
 
-          {activeTab === 'deploy' && <DeploymentGuide />}
+          {activeTab === 'deploy' && currentUser?.role === 'admin' && <DeploymentGuide />}
 
-          {activeTab === 'stream_test' && (
+          {activeTab === 'stream_test' && currentUser?.role === 'admin' && (
             <StreamTestHub streams={streams} activeEndpoint={getSelectedEndpoint()} />
           )}
 
-          {activeTab === 'infra' && (
+          {activeTab === 'infra' && currentUser?.role === 'admin' && (
             <div className="space-y-6">
               {/* Network Information Card */}
               <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-8 space-y-6">
@@ -2901,11 +2926,11 @@ CREATE TABLE IF NOT EXISTS streams (
             </div>
           )}
 
-          {activeTab === 'devices' && (
+          {activeTab === 'devices' && currentUser?.role === 'admin' && (
             <DeviceManager token={token} streams={streams} networkDetails={networkDetails} />
           )}
 
-          {activeTab === 'settings' && (
+          {activeTab === 'settings' && currentUser?.role === 'admin' && (
             <SettingsPage
               token={token}
               currentUser={currentUser}
@@ -2953,6 +2978,24 @@ CREATE TABLE IF NOT EXISTS streams (
               usersList={usersList}
               handleUpdateUserSecurity={handleUpdateUserSecurity}
             />
+          )}
+
+          {currentUser?.role === 'user' && activeTab !== 'dashboard' && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto my-12 shadow-xl">
+              <div className="w-12 h-12 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center mx-auto text-red-400">
+                <Shield className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-bold text-zinc-100">Access Denied</h3>
+              <p className="text-zinc-400 text-sm leading-relaxed">
+                You do not have administrative permissions to view this section. Please switch to your channel dashboard or contact an administrator.
+              </p>
+              <button 
+                onClick={() => setActiveTab('dashboard')} 
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all"
+              >
+                Return to Channel Dashboard
+              </button>
+            </div>
           )}
         </div>
       </main>

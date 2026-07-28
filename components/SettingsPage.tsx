@@ -162,6 +162,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [verifyingDomain, setVerifyingDomain] = useState(false);
 
   const handleRunDomainVerification = async () => {
+    if (!token || !currentUser || currentUser.role !== 'admin') return;
     setVerifyingDomain(true);
     try {
       const res = await fetchWithAuth('/api/settings/domain/verify');
@@ -189,10 +190,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   }, [token]);
 
   useEffect(() => {
-    if (activeTab === 'network' && token) {
+    if (activeTab === 'network' && token && currentUser?.role === 'admin') {
       handleRunDomainVerification();
     }
-  }, [activeTab, token]);
+  }, [activeTab, token, currentUser]);
 
   const fetchWithAuth = async (url: string, init?: RequestInit) => {
     return fetch(url, {
