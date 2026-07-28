@@ -1499,7 +1499,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
   // Proactive Offline-to-Live Auto-Start Monitor
   useEffect(() => {
-    if (!isPlaying || stream.status === 'live') return;
+    if (stream.status === 'live') return;
 
     const pollTimer = setInterval(async () => {
       try {
@@ -1509,6 +1509,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
           const text = await res.text();
           if (text && text.includes('#EXTM3U')) {
             console.log('[Stream Watchdog] Detected active live HLS playlist while offline, auto-triggering live state...');
+            setIsPlaying(true);
             if (onGoLive) {
               onGoLive();
             }
@@ -1520,7 +1521,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     }, 1200);
 
     return () => clearInterval(pollTimer);
-  }, [isPlaying, stream.status, hlsUrl, onGoLive]);
+  }, [stream.status, hlsUrl, onGoLive]);
 
   // Adjust volume dynamically
   useEffect(() => {

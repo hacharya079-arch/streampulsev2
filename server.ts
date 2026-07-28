@@ -176,8 +176,15 @@ async function startServer() {
         res.setHeader('Expires', '0');
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       } else if (filePath.endsWith('.ts')) {
-        res.setHeader('Cache-Control', 'public, max-age=60');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.setHeader('Content-Type', 'video/mp2t');
+      } else if (filePath.endsWith('.m4s') || filePath.endsWith('.mp4')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Content-Type', 'video/mp4');
       } else if (filePath.endsWith('.mpd')) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
         res.setHeader('Pragma', 'no-cache');
@@ -321,13 +328,20 @@ async function startServer() {
       } catch (_) {}
     }
 
-    const hlsDir = path.resolve(`./data/hls/${streamKey}`);
-    if (fs.existsSync(hlsDir)) {
-      try {
-        fs.rmSync(hlsDir, { recursive: true, force: true });
-        console.log(`[Streaming Engine] Removed HLS storage folder for: ${streamKey}`);
-      } catch (e) {
-        console.error(`[Streaming Engine] Error removing HLS folder:`, e);
+    const dirsToClean = [
+      path.resolve(`./data/hls/${streamKey}`),
+      path.resolve(`/var/www/hls/${streamKey}`),
+      path.resolve(`./data/dash/${streamKey}`)
+    ];
+
+    for (const d of dirsToClean) {
+      if (fs.existsSync(d)) {
+        try {
+          fs.rmSync(d, { recursive: true, force: true });
+          console.log(`[Streaming Engine] Removed stream storage folder: ${d}`);
+        } catch (e) {
+          console.error(`[Streaming Engine] Error removing folder ${d}:`, e);
+        }
       }
     }
   };
@@ -683,14 +697,15 @@ async function startServer() {
         }
       }
 
+      const sessionTag = Date.now();
       ffmpegArgs.push(
         '-f', 'hls',
         '-hls_time', String(segmentDuration),
         '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments+omit_endlist+independent_segments+program_date_time',
-        '-hls_start_number_source', 'epoch',
+        '-hls_flags', 'delete_segments+omit_endlist+independent_segments+program_date_time+discont_start',
+        '-hls_start_number', '0',
         '-master_pl_name', 'master.m3u8',
-        '-hls_segment_filename', path.join(hlsDir, safeName, 'file%05d.ts'),
+        '-hls_segment_filename', path.join(hlsDir, safeName, `seg_${sessionTag}_%05d.ts`),
         path.join(hlsDir, safeName, 'index.m3u8')
       );
     });
