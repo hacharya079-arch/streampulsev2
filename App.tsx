@@ -248,6 +248,7 @@ const App: React.FC = () => {
   const [isAudioSettingsExpanded, setIsAudioSettingsExpanded] = useState(false);
 
   // Auth States
+  const [loginRoleMode, setLoginRoleMode] = useState<'admin' | 'user'>('admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -1500,12 +1501,44 @@ CREATE TABLE IF NOT EXISTS streams (
         <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-teal-500 to-orange-500"></div>
           
-          <div className="flex flex-col items-center mb-8">
+          <div className="flex flex-col items-center mb-6">
             <div className="p-3 bg-blue-600/10 rounded-xl mb-3 border border-blue-500/20">
               <Shield className="w-8 h-8 text-blue-500" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight">StreamPulse Admin</h1>
             <p className="text-xs text-zinc-500 uppercase font-mono tracking-widest mt-1">VPS RTMP Control Panel</p>
+          </div>
+
+          {/* Login Role Mode Selector */}
+          <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800/80 mb-6">
+            <button
+              type="button"
+              onClick={() => {
+                setLoginRoleMode('admin');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                loginRoleMode === 'admin'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Admin Login
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoginRoleMode('user');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                loginRoleMode === 'user'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              User Login
+            </button>
           </div>
 
           <form onSubmit={handleAuth} className="space-y-4">
@@ -1517,27 +1550,37 @@ CREATE TABLE IF NOT EXISTS streams (
             )}
 
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Username</label>
+              <label htmlFor="username" className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                Username
+              </label>
               <input 
+                id="username"
+                name="username"
                 type="text" 
                 required
+                autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100"
+                placeholder={loginRoleMode === 'admin' ? "admin" : "Enter username"} 
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 placeholder-zinc-600"
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Password</label>
+              <label htmlFor="password" className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                Password
+              </label>
               <div className="relative">
                 <input 
+                  id="password"
+                  name="password"
                   type={showLoginPassword ? "text" : "password"} 
                   required
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••" 
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 placeholder-zinc-600"
                 />
                 <button
                   type="button"
@@ -1555,7 +1598,7 @@ CREATE TABLE IF NOT EXISTS streams (
               disabled={authLoading}
               className="w-full h-10 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 mt-2"
             >
-              {authLoading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : 'Sign In'}
+              {authLoading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : `Sign In as ${loginRoleMode === 'admin' ? 'Admin' : 'User'}`}
             </button>
           </form>
 
