@@ -160,39 +160,70 @@ async function startServer() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Serve HLS & DASH streams with proper CORS headers for player libraries
+  // Serve HLS & DASH streams with proper CORS and cache headers
   const hlsPath = path.resolve('./data/hls');
   if (!fs.existsSync(hlsPath)) {
     fs.mkdirSync(hlsPath, { recursive: true });
   }
 
+  const hlsStaticMiddleware = express.static(hlsPath, {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.m3u8')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      } else if (filePath.endsWith('.ts')) {
+        res.setHeader('Cache-Control', 'public, max-age=60');
+        res.setHeader('Content-Type', 'video/mp2t');
+      } else if (filePath.endsWith('.mpd')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Content-Type', 'application/dash+xml');
+      }
+    }
+  });
+
   app.use('/hls', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Range');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Date');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
     }
     next();
-  }, express.static(hlsPath));
+  }, hlsStaticMiddleware, (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.status(404).send('HLS Stream Not Found');
+  });
 
   app.use('/dash', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Range');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Date');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
     }
     next();
-  }, express.static(hlsPath));
+  }, hlsStaticMiddleware, (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0, s-maxage=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.status(404).send('DASH Manifest Not Found');
+  });
 
   // RTMP Statistics are no longer mocked or served by Express.
   // Instead, they are handled natively by the Nginx RTMP statistics module (rtmp_stat)
@@ -274,7 +305,7 @@ async function startServer() {
     const proc = activeFfProcesses.get(streamKey);
     if (proc) {
       try {
-        proc.kill('SIGTERM');
+        proc.kill('SIGKILL');
         console.log(`[Streaming Engine] Terminated tracked FFmpeg child process for key: ${streamKey}`);
       } catch (e) {
         console.error(`[Streaming Engine] Error killing process:`, e);
@@ -283,13 +314,11 @@ async function startServer() {
     }
 
     if (os.platform() !== 'win32') {
-      exec(`pkill -f "ffmpeg.*${streamKey}"`, (err) => {
-        if (err) {
-          console.log(`[Streaming Engine] No system FFmpeg processes matching "${streamKey}" to kill.`);
-        } else {
-          console.log(`[Streaming Engine] Successfully terminated system FFmpeg processes for: ${streamKey}`);
-        }
-      });
+      try {
+        const { execSync } = await import('child_process');
+        execSync(`pkill -9 -f "ffmpeg.*${streamKey}"`, { stdio: 'ignore' });
+        console.log(`[Streaming Engine] Successfully terminated system FFmpeg processes for: ${streamKey}`);
+      } catch (_) {}
     }
 
     const hlsDir = path.resolve(`./data/hls/${streamKey}`);
@@ -537,7 +566,10 @@ async function startServer() {
   };
 
   const generateFfmpegArguments = (finalActiveProfiles: any[], hlsDir: string, rtmpInputUrl?: string): string[] => {
-    const ffmpegArgs: string[] = ['-re'];
+    const ffmpegArgs: string[] = [];
+    if (!rtmpInputUrl) {
+      ffmpegArgs.push('-re');
+    }
     if (finalActiveProfiles.length === 0) {
       return ffmpegArgs;
     }
@@ -550,6 +582,8 @@ async function startServer() {
       ffmpegArgs.push('-f', 'lavfi', '-i', `testsrc=size=1920x1080:rate=${rate}`);
       ffmpegArgs.push('-f', 'lavfi', '-i', 'sine=frequency=440');
     }
+
+    const segmentDuration = serverSettings.streaming?.hlsSegmentDuration || 4;
 
     finalActiveProfiles.forEach((p) => {
       const safeName = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -602,7 +636,7 @@ async function startServer() {
           ffmpegArgs.push('-pix_fmt', p.pixelFormat || 'yuv420p');
         }
         
-        const gop = p.gopSize || p.keyframeInterval || (p.fps || 30) * 2;
+        const gop = p.gopSize || p.keyframeInterval || (p.fps || 30) * segmentDuration;
         ffmpegArgs.push('-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0');
 
         if (p.maxBitrate) {
@@ -651,11 +685,12 @@ async function startServer() {
 
       ffmpegArgs.push(
         '-f', 'hls',
-        '-hls_time', '4',
+        '-hls_time', String(segmentDuration),
         '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments+append_list+omit_endlist',
+        '-hls_flags', 'delete_segments+omit_endlist+independent_segments+program_date_time',
+        '-hls_start_number_source', 'epoch',
         '-master_pl_name', 'master.m3u8',
-        '-hls_segment_filename', path.join(hlsDir, safeName, 'file%03d.ts'),
+        '-hls_segment_filename', path.join(hlsDir, safeName, 'file%05d.ts'),
         path.join(hlsDir, safeName, 'index.m3u8')
       );
     });
@@ -664,8 +699,11 @@ async function startServer() {
   };
 
   const startFfMpegTranscoder = async (streamKey: string) => {
-    console.log(`[Streaming Engine] Starting FFmpeg transcoder for Stream Key: ${streamKey}`);
+    console.log(`[Streaming Engine] Starting fresh FFmpeg transcoder session for Stream Key: ${streamKey}`);
     
+    // Purge any existing process and stale files to guarantee a clean state
+    await stopStreamIngestAndHls(streamKey);
+
     const hlsDir = path.resolve(`./data/hls/${streamKey}`);
     if (!fs.existsSync(hlsDir)) {
       fs.mkdirSync(hlsDir, { recursive: true });
@@ -725,7 +763,7 @@ async function startServer() {
     finalActiveProfiles.forEach((p) => {
       const safeName = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       const videoBit = Number(p.bitrate) || 2500;
-      const audioBit = p.audioEnabled ? (Number(p.audioBitrate) || 128) : 0;
+      const audioBit = p.audioEnabled !== false ? (Number(p.audioBitrate) || 128) : 0;
       const bandwidth = p.width === 0 ? audioBit * 1000 : (videoBit + audioBit) * 1000;
       
       if (p.width === 0) {
@@ -735,12 +773,12 @@ async function startServer() {
       }
     });
 
-    // Write a beautiful, dynamic and compliant DASH manifest containing all enabled profiles
+    // Write a valid DASH manifest
     let reps = '';
     finalActiveProfiles.forEach((p) => {
       const safeName = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       const videoBit = (Number(p.bitrate) || 2500) * 1000;
-      const audioBit = (p.audioEnabled ? (Number(p.audioBitrate) || 128) : 0) * 1000;
+      const audioBit = (p.audioEnabled !== false ? (Number(p.audioBitrate) || 128) : 0) * 1000;
       
       if (p.width === 0) {
         reps += `      <Representation id="${safeName}" mimeType="audio/mp4" codecs="mp4a.40.2" audioSamplingRate="${p.audioSampleRate || 44100}" bandwidth="${audioBit}">
@@ -773,34 +811,16 @@ ${reps}    </AdaptationSet>
       fs.writeFileSync(path.join(hlsDir, 'master.m3u8'), masterContent);
       fs.writeFileSync(path.join(hlsDir, 'manifest.mpd'), dashContent);
       
-      // Setup folders and playlist files for each active profile
+      // Ensure subdirectories exist for each active profile (without pre-creating corrupt/dummy segment files)
       finalActiveProfiles.forEach((p) => {
         const safeName = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
         const subDir = path.join(hlsDir, safeName);
         if (!fs.existsSync(subDir)) {
           fs.mkdirSync(subDir, { recursive: true });
         }
-        
-        const subPlaylistContent = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:4
-#EXT-X-MEDIA-SEQUENCE:1
-#EXT-X-PLAYLIST-TYPE:EVENT
-#EXTINF:4.000,
-segment1.ts
-#EXTINF:4.000,
-segment2.ts
-#EXTINF:4.000,
-segment3.ts
-`;
-        fs.writeFileSync(path.join(subDir, 'index.m3u8'), subPlaylistContent);
-        // Write dummy stable chunk data for media players
-        fs.writeFileSync(path.join(subDir, 'segment1.ts'), 'RIFFxxxxWAVEfmt ');
-        fs.writeFileSync(path.join(subDir, 'segment2.ts'), 'RIFFxxxxWAVEfmt ');
-        fs.writeFileSync(path.join(subDir, 'segment3.ts'), 'RIFFxxxxWAVEfmt ');
       });
 
-      console.log(`[Streaming Engine] Dynamically pre-generated master HLS & MPEG-DASH files for streamKey: ${streamKey}`);
+      console.log(`[Streaming Engine] Dynamically generated fresh master HLS & MPEG-DASH manifests for streamKey: ${streamKey}`);
     } catch (err) {
       console.error(`[Streaming Engine] Failed to write initial HLS/DASH files:`, err);
     }
@@ -2822,8 +2842,8 @@ segment3.ts
 
   // RTMP Ingest Validation & Auto-Transcoding Start HTTP Callback
   app.post('/api/rtmp/publish', async (req, res) => {
-    // Parse form body or query or json
-    const streamKey = req.body.name || req.body.key || req.body.stream_key || req.query.name || req.query.key;
+    // Parse form body or query or json safely
+    const streamKey = (req.body && (req.body.name || req.body.key || req.body.stream_key)) || req.query.name || req.query.key;
     console.log(`[RTMP Publish Callback] Key: "${streamKey}"`);
 
     if (!streamKey) {
@@ -2885,7 +2905,7 @@ segment3.ts
 
   // RTMP Unpublish/Disconnect HTTP Callback
   app.post('/api/rtmp/publish_done', async (req, res) => {
-    const streamKey = req.body.name || req.body.key || req.body.stream_key || req.query.name || req.query.key;
+    const streamKey = (req.body && (req.body.name || req.body.key || req.body.stream_key)) || req.query.name || req.query.key;
     console.log(`[RTMP Publish Done Callback] Key: "${streamKey}"`);
 
     if (!streamKey) {
@@ -3854,7 +3874,10 @@ segment3.ts
     const viteMod = 'vite';
     const { createServer: createViteServer } = await import(viteMod);
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -3868,6 +3891,16 @@ segment3.ts
 
   // WRAP EXPRESS APP IN HTTP SERVER FOR WEBSOCKET SUPPORT
   const httpServer = createServer(app);
+
+  httpServer.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[Server Error] Port ${PORT} is already in use. Shutting down gracefully...`);
+      process.exit(1);
+    } else {
+      console.error(`[Server Error] Unhandled HTTP server error:`, err);
+    }
+  });
+
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (request, socket, head) => {
@@ -4102,10 +4135,10 @@ segment3.ts
   }
 
   startStreamMonitoringService();
-  await initializeServerBoot();
+  initializeServerBoot().catch(err => console.error('[Boot Init] Error during boot init:', err));
 
   const serverInstance = httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`StreamPulse VPS Core listening on http://localhost:${PORT}`);
+    console.log(`StreamPulse VPS Core listening on http://0.0.0.0:${PORT}`);
   });
 
   const gracefulShutdown = async (signal: string) => {
