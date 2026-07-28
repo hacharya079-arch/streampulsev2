@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CopyButton } from './components/CopyButton';
 import { ToastContainer } from './components/ToastContainer';
 import { copyToClipboard } from './utils/clipboard';
@@ -847,6 +847,13 @@ CREATE TABLE IF NOT EXISTS streams (
     }
   }, [token, fetchWithNetworkHeaders, activeTab, manualIp, customDomain, creationIpMode, deploymentMode]);
 
+  const wsRef = useRef<WebSocket | null>(null);
+  const currentUserRef = useRef(currentUser);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   useEffect(() => {
     if (!token) return;
     fetchUserPreferences();
@@ -857,47 +864,151 @@ CREATE TABLE IF NOT EXISTS streams (
     fetchActionLogs();
     fetchNetworkDetails();
 
-    // Setup real-time WebSocket listener for immediate stream status change events
-    let ws: WebSocket | null = null;
-    try {
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      ws = new WebSocket(`${wsProtocol}//${host}/api/dashboard-ws`);
+    let isMounted = true;
+    let reconnectTimer: any = null;
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'stream_status_change' && (msg.streamId || msg.streamKey)) {
-            console.log(`[WebSocket Engine] Stream status updated in real-time: ${msg.streamKey || msg.streamId} -> ${msg.status}`);
-            setStreams(prevStreams =>
-              prevStreams.map(s => (s.id === msg.streamId || s.streamKey === msg.streamKey) ? { ...s, status: msg.status } : s)
-            );
+    const connectWebSocket = () => {
+      if (!isMounted) return;
+      try {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        const wsUrl = `${wsProtocol}//${host}/api/dashboard-ws`;
+
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          console.log('[WebSocket Engine] Connected to real-time sync stream.');
+          fetchStreams();
+          if (currentUserRef.current?.role === 'admin') {
+            fetchStats();
           }
-        } catch (e) {}
-      };
-    } catch (err) {
-      console.warn('[WebSocket Engine] Dashboard WS connection failed:', err);
-    }
+          fetchActionLogs();
+          fetchNetworkDetails();
+        };
 
-    // Poll server statistics, streams, logs, and network details every 3 seconds as fallback
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (!msg || typeof msg !== 'object') return;
+
+            // 1. Stream Status Changes & Updates
+            if (msg.type === 'stream_status_change' || msg.type === 'stream_updated') {
+              setStreams(prevStreams => {
+                const streamId = msg.streamId || (msg.stream && msg.stream.id);
+                const streamKey = msg.streamKey || (msg.stream && msg.stream.streamKey);
+
+                const existingIndex = prevStreams.findIndex(s => 
+                  (streamId && s.id === streamId) || (streamKey && s.streamKey === streamKey)
+                );
+
+                if (existingIndex !== -1) {
+                  return prevStreams.map((s, idx) => {
+                    if (idx === existingIndex) {
+                      return {
+                        ...s,
+                        ...(msg.status ? { status: msg.status } : {}),
+                        ...(msg.stream || {})
+                      };
+                    }
+                    return s;
+                  });
+                } else if (msg.stream) {
+                  const user = currentUserRef.current;
+                  if (user?.role === 'admin' || user?.assigned_stream_id === msg.stream.id || msg.stream.userId === user?.id) {
+                    return [msg.stream, ...prevStreams];
+                  }
+                }
+                return prevStreams;
+              });
+            }
+
+            // 2. Stream Created
+            else if (msg.type === 'stream_created' && msg.stream) {
+              setStreams(prevStreams => {
+                if (prevStreams.some(s => s.id === msg.stream.id)) {
+                  return prevStreams.map(s => s.id === msg.stream.id ? { ...s, ...msg.stream } : s);
+                }
+                const user = currentUserRef.current;
+                if (user?.role === 'admin' || user?.assigned_stream_id === msg.stream.id || msg.stream.userId === user?.id) {
+                  return [msg.stream, ...prevStreams];
+                }
+                return prevStreams;
+              });
+            }
+
+            // 3. Stream Deleted
+            else if (msg.type === 'stream_deleted' && msg.streamId) {
+              setStreams(prevStreams => prevStreams.filter(s => s.id !== msg.streamId));
+            }
+
+            // 4. Analytics & System Stats Update
+            else if (msg.type === 'analytics_update') {
+              setStats(prev => ({
+                ...prev,
+                activeStreamsCount: msg.activeStreams ?? prev.activeStreamsCount,
+                totalViewers: msg.totalViewers ?? prev.totalViewers,
+                cpuUsagePct: msg.systemMetrics?.cpuUsage ?? prev.cpuUsagePct,
+                memoryUsagePct: msg.systemMetrics?.memoryUsage ?? prev.memoryUsagePct,
+                freeMemoryGb: msg.systemMetrics?.freeMemoryGb ?? prev.freeMemoryGb,
+              }));
+            }
+
+            // 5. Action Logged
+            else if (msg.type === 'action_logged') {
+              if (msg.log) {
+                setActionLogs(prev => {
+                  if (prev.some(l => l.id === msg.log.id)) return prev;
+                  return [msg.log, ...prev].slice(0, 200);
+                });
+              } else {
+                fetchActionLogs();
+              }
+            }
+          } catch (e) {
+            console.warn('[WebSocket Engine] Message handling error:', e);
+          }
+        };
+
+        ws.onclose = () => {
+          if (isMounted) {
+            reconnectTimer = setTimeout(connectWebSocket, 3000);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.warn('[WebSocket Engine] Error encountered:', err);
+        };
+      } catch (err) {
+        if (isMounted) {
+          reconnectTimer = setTimeout(connectWebSocket, 5000);
+        }
+      }
+    };
+
+    connectWebSocket();
+
+    // Fallback sync interval (every 15s)
     const interval = setInterval(() => {
       fetchStreams();
-      if (currentUser?.role === 'admin') {
+      if (currentUserRef.current?.role === 'admin') {
         fetchStats();
       }
       fetchActionLogs();
       fetchNetworkDetails();
-    }, 3000);
+    }, 15000);
 
     return () => {
+      isMounted = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       clearInterval(interval);
-      if (ws) {
+      if (wsRef.current) {
         try {
-          ws.close();
+          wsRef.current.close();
         } catch (_) {}
       }
     };
-  }, [token, currentUser, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
+  }, [token, fetchUserPreferences, fetchStreams, fetchStats, fetchActionLogs, fetchNetworkDetails]);
 
   // Removed auto-save useEffect to enforce explicit Save button functionality as required.
 

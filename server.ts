@@ -201,8 +201,21 @@ async function startServer() {
 
   // Streaming Engine global maps & helpers
   const activeFfProcesses = new Map<string, any>();
+  const deviceConnections = new Map<string, any>(); // deviceId -> WebSocket
+  const dashboardConnections = new Set<any>(); // WebSockets for dashboards
 
-
+  function broadcastToDashboards(message: any) {
+    const payload = JSON.stringify(message);
+    for (const ws of dashboardConnections) {
+      if (ws.readyState === 1 /* OPEN */) {
+        try {
+          ws.send(payload);
+        } catch (e) {
+          console.error('[WS Broadcast] Error:', e);
+        }
+      }
+    }
+  }
 
   const logStreamAction = async (
     streamId: string, 
@@ -246,6 +259,10 @@ async function startServer() {
     try {
       fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2));
       console.log(`[Action Log] Added: ${action} on stream "${streamTitle}" by ${user} from ${ip}`);
+      broadcastToDashboards({
+        type: 'action_logged',
+        log: newLog
+      });
     } catch (err) {
       console.error('Failed to write action log', err);
     }
@@ -2381,6 +2398,11 @@ segment3.ts
       });
 
       const augmented = await augmentStreamWithPlayback(newStream, req);
+      broadcastToDashboards({
+        type: 'stream_created',
+        streamId: newStream.id,
+        stream: augmented
+      });
       res.status(201).json(augmented);
     } catch (err) {
       console.error('Create stream error:', err);
@@ -2507,6 +2529,11 @@ segment3.ts
         return res.status(404).json({ error: 'Stream not found' });
       }
       const augmented = await augmentStreamWithPlayback(stream, req);
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: stream.id,
+        stream: augmented
+      });
       res.json(augmented);
     } catch (err) {
       res.status(500).json({ error: 'Failed to update stream' });
@@ -2519,6 +2546,10 @@ segment3.ts
       if (!success) {
         return res.status(404).json({ error: 'Stream not found' });
       }
+      broadcastToDashboards({
+        type: 'stream_deleted',
+        streamId: req.params.id
+      });
       res.json({ message: 'Stream deleted successfully' });
     } catch (err) {
       res.status(500).json({ error: 'Failed to delete stream' });
@@ -2576,6 +2607,11 @@ segment3.ts
       }
 
       const augmented = await augmentStreamWithPlayback(updatedStream, req);
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: streamId,
+        stream: augmented
+      });
 
       res.status(200).json({ 
         message: 'Profile deleted successfully',
@@ -2597,6 +2633,11 @@ segment3.ts
         return res.status(404).json({ error: 'Stream not found' });
       }
       const augmented = await augmentStreamWithPlayback(stream, req);
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: stream.id,
+        stream: augmented
+      });
       res.json(augmented);
     } catch (err) {
       res.status(500).json({ error: 'Failed to regenerate stream key' });
@@ -2619,6 +2660,18 @@ segment3.ts
         return res.status(404).json({ error: 'Stream not found' });
       }
       const augmented = await augmentStreamWithPlayback(stream, req);
+      broadcastToDashboards({
+        type: 'stream_status_change',
+        streamId: stream.id,
+        streamKey: stream.streamKey,
+        status: stream.status,
+        stream: augmented
+      });
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: stream.id,
+        stream: augmented
+      });
       res.json(augmented);
     } catch (err) {
       res.status(500).json({ error: 'Failed to toggle stream state' });
@@ -2651,6 +2704,18 @@ segment3.ts
       await logStreamAction(id, stream.title, req.user.username, 'enable', req.ip || '0.0.0.0', 'Stream enabled by administrator/user');
 
       const augmented = await augmentStreamWithPlayback(updatedStream, req);
+      broadcastToDashboards({
+        type: 'stream_status_change',
+        streamId: id,
+        streamKey: stream.streamKey,
+        status: 'offline',
+        stream: augmented
+      });
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: id,
+        stream: augmented
+      });
       res.json(augmented);
     } catch (err) {
       console.error('Error enabling stream:', err);
@@ -2689,6 +2754,18 @@ segment3.ts
       await logStreamAction(id, stream.title, req.user.username, 'disable', req.ip || '0.0.0.0', 'Stream disabled by administrator/user');
 
       const augmented = await augmentStreamWithPlayback(updatedStream, req);
+      broadcastToDashboards({
+        type: 'stream_status_change',
+        streamId: id,
+        streamKey: stream.streamKey,
+        status: 'disabled',
+        stream: augmented
+      });
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: id,
+        stream: augmented
+      });
       res.json(augmented);
     } catch (err) {
       console.error('Error disabling stream:', err);
@@ -2782,12 +2859,21 @@ segment3.ts
         startTime: new Date().toISOString()
       });
 
+      const updatedStream = await db.getStreamByKey(streamKey);
+      const augmented = updatedStream ? await augmentStreamWithPlayback(updatedStream, req) : null;
+
       console.log(`[Stream Monitor] [State Transition] Stream "${stream.title}" (${streamKey}) -> LIVE via RTMP publish callback`);
       broadcastToDashboards({
         type: 'stream_status_change',
         streamId: stream.id,
         streamKey: streamKey,
-        status: 'live'
+        status: 'live',
+        stream: augmented
+      });
+      broadcastToDashboards({
+        type: 'stream_updated',
+        streamId: stream.id,
+        stream: augmented
       });
 
       return res.status(200).send('OK');
@@ -2819,12 +2905,21 @@ segment3.ts
           viewers: 0
         });
 
+        const updatedOffline = await db.getStreamByKey(streamKey);
+        const augmentedOffline = updatedOffline ? await augmentStreamWithPlayback(updatedOffline, req) : null;
+
         console.log(`[Stream Monitor] [State Transition] Stream "${stream.title}" (${streamKey}) -> OFFLINE via RTMP unpublish callback`);
         broadcastToDashboards({
           type: 'stream_status_change',
           streamId: stream.id,
           streamKey: streamKey,
-          status: 'offline'
+          status: 'offline',
+          stream: augmentedOffline
+        });
+        broadcastToDashboards({
+          type: 'stream_updated',
+          streamId: stream.id,
+          stream: augmentedOffline
         });
 
         await logStreamAction(stream.id, stream.title, 'System/RTMP Ingest', 'disable', req.ip || '0.0.0.0', 'Stream disconnected from RTMP server');
@@ -3081,18 +3176,6 @@ segment3.ts
   // ----------------------------------------------------
   // RASPBERRY PI DEVICE MANAGEMENT & PAIRING ENDPOINTS
   // ----------------------------------------------------
-
-  const deviceConnections = new Map<string, any>(); // deviceId -> WebSocket
-  const dashboardConnections = new Set<any>(); // WebSockets for dashboards
-
-  function broadcastToDashboards(message: any) {
-    const payload = JSON.stringify(message);
-    for (const ws of dashboardConnections) {
-      if (ws.readyState === 1 /* OPEN */) {
-        ws.send(payload);
-      }
-    }
-  }
 
   // GET all devices
   app.get('/api/devices', authenticateToken, requireAdmin, async (req, res) => {
