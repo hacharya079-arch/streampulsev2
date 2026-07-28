@@ -20,7 +20,6 @@ if (!fs.existsSync(DATA_DIR)) {
 export interface UserRecord {
   id: number;
   username: string;
-  email: string;
   password_hash: string;
   role: 'admin' | 'user';
   created_at: string;
@@ -320,12 +319,12 @@ export const db = {
             CREATE TABLE IF NOT EXISTS users (
               id SERIAL PRIMARY KEY,
               username VARCHAR(50) UNIQUE NOT NULL,
-              email VARCHAR(100) NOT NULL,
               password_hash VARCHAR(255) NOT NULL,
               role VARCHAR(20) DEFAULT 'user',
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            ALTER TABLE users DROP COLUMN IF EXISTS email;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'enabled';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_stream_id VARCHAR(50);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS login_history TEXT;
@@ -502,7 +501,7 @@ export const db = {
 
     // --- Unified Administrator Authentication Audit & Verification ---
     const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
     const resetRequested = process.env.ADMIN_PASSWORD_RESET === 'true';
     const oldHardcodedHash = '$2a$10$Xm3C0H5gLqGz7uB7wF8pZeGbyhS6F1mP689S5fV/M4V8L5Yn4O7yW';
 
@@ -528,9 +527,9 @@ export const db = {
             const salt = await bcrypt.genSalt(10);
             const passwordHash = await bcrypt.hash(adminPassword, salt);
             await client.query(`
-              INSERT INTO users (username, email, password_hash, role, status, display_name)
-              VALUES ($1, $2, $3, 'admin', 'enabled', $4)
-            `, [adminUsername, `${adminUsername}@streampulse.io`, passwordHash, adminUsername]);
+              INSERT INTO users (username, password_hash, role, status, display_name)
+              VALUES ($1, $2, 'admin', 'enabled', $3)
+            `, [adminUsername, passwordHash, adminUsername]);
             console.log(`Default admin created.`);
           } else {
             // An administrator exists - verify the password hash
@@ -549,7 +548,7 @@ export const db = {
               console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
             }
 
-            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
+            if (resetRequested || isCorrupted || currentHash === oldHardcodedHash || (!matchesPassword && targetAdmin.username.toLowerCase() === 'admin' && !process.env.ADMIN_PASSWORD)) {
               const salt = await bcrypt.genSalt(10);
               const passwordHash = await bcrypt.hash(adminPassword, salt);
               await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, targetAdmin.id]);
@@ -569,7 +568,9 @@ export const db = {
         console.error('Error during PostgreSQL authentication audit:', err);
       }
     } else {
-      // JSON storage mode audit & verification
+      // JSON storage mode audit & verification - clean up any residual email fields
+      localState.users.forEach((u: any) => { delete u.email; });
+
       const existingAdminByUsername = localState.users.find(u => (u.username || '').toLowerCase() === adminUsername.toLowerCase());
       const existingAdminByRole = localState.users.find(u => u.role === 'admin');
 
@@ -585,7 +586,6 @@ export const db = {
         localState.users.push({
           id: localState.users.length > 0 ? Math.max(0, ...localState.users.map(u => Number(u.id) || 0)) + 1 : 1,
           username: adminUsername,
-          email: `${adminUsername}@streampulse.io`,
           password_hash: passwordHash,
           role: 'admin',
           created_at: new Date().toISOString(),
@@ -598,12 +598,20 @@ export const db = {
         // An administrator exists - verify the password hash
         const currentHash = targetAdmin.password_hash;
         const isCorrupted = !isValidBcryptHash(currentHash);
+        let matchesPassword = false;
+        if (!isCorrupted && currentHash) {
+          try {
+            matchesPassword = bcrypt.compareSync(adminPassword, currentHash);
+          } catch (_) {
+            matchesPassword = false;
+          }
+        }
 
         if (isCorrupted) {
           console.warn(`Corrupted password hash detected for admin user "${targetAdmin.username}". Auto-repairing hash...`);
         }
 
-        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash) {
+        if (resetRequested || isCorrupted || currentHash === oldHardcodedHash || (!matchesPassword && targetAdmin.username.toLowerCase() === 'admin' && !process.env.ADMIN_PASSWORD)) {
           const salt = bcrypt.genSaltSync(10);
           const passwordHash = bcrypt.hashSync(adminPassword, salt);
           targetAdmin.password_hash = passwordHash;
@@ -628,7 +636,7 @@ export const db = {
     const clean = username.trim().toLowerCase();
     if (usePostgres && pgPool) {
       const res = await pgPool.query(
-        'SELECT * FROM users WHERE LOWER(TRIM(username)) = $1 OR LOWER(TRIM(email)) = $1',
+        'SELECT * FROM users WHERE LOWER(TRIM(username)) = $1',
         [clean]
       );
       if (res.rows.length === 0) return null;
@@ -636,7 +644,6 @@ export const db = {
       return {
         id: r.id,
         username: r.username,
-        email: r.email,
         password_hash: r.password_hash,
         role: r.role,
         created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
@@ -647,36 +654,7 @@ export const db = {
       };
     }
     const user = localState.users.find(
-      u => (u.username ? u.username.trim().toLowerCase() : '') === clean || (u.email ? u.email.trim().toLowerCase() : '') === clean
-    );
-    return user || null;
-  },
-
-  getUserByEmail: async (email: string): Promise<UserRecord | null> => {
-    if (!email) return null;
-    const clean = email.trim().toLowerCase();
-    if (usePostgres && pgPool) {
-      const res = await pgPool.query(
-        'SELECT * FROM users WHERE LOWER(TRIM(email)) = $1',
-        [clean]
-      );
-      if (res.rows.length === 0) return null;
-      const r = res.rows[0];
-      return {
-        id: r.id,
-        username: r.username,
-        email: r.email,
-        password_hash: r.password_hash,
-        role: r.role,
-        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
-        status: r.status || 'enabled',
-        assigned_stream_id: r.assigned_stream_id || null,
-        login_history: r.login_history || null,
-        display_name: r.display_name || null
-      };
-    }
-    const user = localState.users.find(
-      u => (u.email ? u.email.trim().toLowerCase() : '') === clean
+      u => (u.username ? u.username.trim().toLowerCase() : '') === clean
     );
     return user || null;
   },
@@ -691,7 +669,6 @@ export const db = {
       return {
         id: r.id,
         username: r.username,
-        email: r.email,
         password_hash: r.password_hash,
         role: r.role,
         created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
@@ -710,7 +687,6 @@ export const db = {
       return res.rows.map(r => ({
         id: r.id,
         username: r.username,
-        email: r.email,
         password_hash: r.password_hash,
         role: r.role,
         created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
@@ -725,26 +701,23 @@ export const db = {
 
   createUser: async (
     username: string,
-    email: string,
     passwordHash: string,
     role: 'admin' | 'user' = 'user',
     assignedStreamId: string | null = null,
     displayName: string | null = null
   ): Promise<UserRecord> => {
     const cleanUsername = username.trim();
-    const cleanEmail = email.trim();
     const finalDisplayName = displayName && displayName.trim() ? displayName.trim() : cleanUsername;
 
     if (usePostgres && pgPool) {
       const res = await pgPool.query(
-        'INSERT INTO users (username, email, password_hash, role, status, assigned_stream_id, login_history, display_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-        [cleanUsername, cleanEmail, passwordHash, role, 'enabled', assignedStreamId, null, finalDisplayName]
+        'INSERT INTO users (username, password_hash, role, status, assigned_stream_id, login_history, display_name) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+        [cleanUsername, passwordHash, role, 'enabled', assignedStreamId, null, finalDisplayName]
       );
       const r = res.rows[0];
       return {
         id: r.id,
         username: r.username,
-        email: r.email,
         password_hash: r.password_hash,
         role: r.role,
         created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
@@ -757,7 +730,6 @@ export const db = {
     const newUser: UserRecord = {
       id: localState.users.length > 0 ? Math.max(0, ...localState.users.map(u => Number(u.id) || 0)) + 1 : 1,
       username: cleanUsername,
-      email: cleanEmail,
       password_hash: passwordHash,
       role,
       created_at: new Date().toISOString(),

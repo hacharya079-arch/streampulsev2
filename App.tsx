@@ -53,7 +53,9 @@ import {
   ChevronDown,
   ChevronUp,
   Sliders,
-  Info
+  Info,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import StreamPlayer from './components/StreamPlayer';
@@ -246,10 +248,9 @@ const App: React.FC = () => {
   const [isAudioSettingsExpanded, setIsAudioSettingsExpanded] = useState(false);
 
   // Auth States
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [email, setEmail] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
@@ -259,19 +260,22 @@ const App: React.FC = () => {
   const [usersError, setUsersError] = useState<string | null>(null);
   
   const [newUsername, setNewUsername] = useState('');
-  const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newConfirmPassword, setNewConfirmPassword] = useState('');
+  const [newRole, setNewRole] = useState<'admin' | 'user'>('user');
   const [newAssignedStreamId, setNewAssignedStreamId] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [createUserSuccess, setCreateUserSuccess] = useState('');
 
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [editUsername, setEditUsername] = useState('');
-  const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
   const [editStatus, setEditStatus] = useState<'enabled' | 'disabled'>('enabled');
   const [editAssignedStreamId, setEditAssignedStreamId] = useState('');
   const [editDisplayName, setEditDisplayName] = useState('');
   const [editRole, setEditRole] = useState<'admin' | 'user'>('user');
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [viewingHistoryUser, setViewingHistoryUser] = useState<any | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
@@ -386,7 +390,6 @@ ffmpeg -i "\${RTMP_INPUT}" \\
     'schema': `CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) DEFAULT 'user',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -478,14 +481,11 @@ CREATE TABLE IF NOT EXISTS streams (
     setAuthError(null);
     setAuthLoading(true);
 
-    const url = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-    const body = authMode === 'login' ? { username, password } : { username, email, password, role: 'admin' };
-
     try {
-      const res = await fetch(url, {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ username: username.trim(), password })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -497,7 +497,6 @@ CREATE TABLE IF NOT EXISTS streams (
       setCurrentUser(data.user);
       setUsername('');
       setPassword('');
-      setEmail('');
     } catch (err: any) {
       setAuthError(err.message);
     } finally {
@@ -612,8 +611,16 @@ CREATE TABLE IF NOT EXISTS streams (
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUsername || !newEmail || !newPassword) {
+    if (!newUsername || !newPassword || !newConfirmPassword) {
       setUsersError('Please fill out all required fields');
+      return;
+    }
+    if (newPassword !== newConfirmPassword) {
+      setUsersError('Passwords do not match');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setUsersError('Password must be at least 6 characters long');
       return;
     }
     setUsersError(null);
@@ -625,18 +632,19 @@ CREATE TABLE IF NOT EXISTS streams (
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          username: newUsername,
-          email: newEmail,
+          username: newUsername.trim(),
           password: newPassword,
+          role: newRole,
           assigned_stream_id: newAssignedStreamId || null
         })
       });
       const data = await res.json();
       if (res.ok) {
-        setCreateUserSuccess('Channel User created successfully!');
+        setCreateUserSuccess(`User "${data.username}" created successfully!`);
         setNewUsername('');
-        setNewEmail('');
         setNewPassword('');
+        setNewConfirmPassword('');
+        setNewRole('user');
         setNewAssignedStreamId('');
         fetchUsers();
       } else {
@@ -653,14 +661,17 @@ CREATE TABLE IF NOT EXISTS streams (
     setUsersError(null);
     try {
       const body: any = {
-        username: editUsername,
-        email: editEmail,
+        username: editUsername.trim(),
         status: editStatus,
         assigned_stream_id: editAssignedStreamId || null,
         role: editRole,
-        display_name: editDisplayName || editUsername
+        display_name: editDisplayName ? editDisplayName.trim() : editUsername.trim()
       };
       if (editPassword) {
+        if (editPassword.length < 6) {
+          setUsersError('Password must be at least 6 characters long');
+          return;
+        }
         body.password = editPassword;
       }
       const res = await fetchWithNetworkHeaders(`/api/users/${editingUserId}`, {
@@ -1519,14 +1530,24 @@ CREATE TABLE IF NOT EXISTS streams (
 
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Password</label>
-              <input 
-                type="password" 
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100"
-              />
+              <div className="relative">
+                <input 
+                  type={showLoginPassword ? "text" : "password"} 
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••" 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
+                  title={showLoginPassword ? "Hide password" : "Show password"}
+                >
+                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <button 
@@ -2297,7 +2318,7 @@ CREATE TABLE IF NOT EXISTS streams (
                 {/* Create User Card */}
                 <div className="lg:col-span-1 bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-sm h-fit">
                   <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <Plus className="w-5 h-5 text-zinc-400" /> Create Channel Login
+                    <Plus className="w-5 h-5 text-zinc-400" /> Create User
                   </h3>
                   <form onSubmit={handleCreateUser} className="space-y-4">
                     <div className="space-y-1.5">
@@ -2309,20 +2330,50 @@ CREATE TABLE IF NOT EXISTS streams (
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Email Address</label>
-                      <input 
-                        type="email" required value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
-                        placeholder="e.g. broadcaster@streampulse.io"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 font-medium"
-                      />
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Password</label>
+                      <div className="relative">
+                        <input 
+                          type={showNewPassword ? "text" : "password"} required value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="••••••••••••"
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 font-medium"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword(!showNewPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
+                          title={showNewPassword ? "Hide password" : "Show password"}
+                        >
+                          {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Password</label>
-                      <input 
-                        type="password" required value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="••••••••••••"
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Confirm Password</label>
+                      <div className="relative">
+                        <input 
+                          type={showConfirmPassword ? "text" : "password"} required value={newConfirmPassword} onChange={(e) => setNewConfirmPassword(e.target.value)}
+                          placeholder="••••••••••••"
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 font-medium"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
+                          title={showConfirmPassword ? "Hide password" : "Show password"}
+                        >
+                          {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Role</label>
+                      <select 
+                        value={newRole} onChange={(e: any) => setNewRole(e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 font-medium"
-                      />
+                      >
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                      </select>
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase">Assign Channel</label>
@@ -2339,7 +2390,7 @@ CREATE TABLE IF NOT EXISTS streams (
                       </select>
                     </div>
                     <button type="submit" className="w-full mt-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-all text-sm shadow-lg shadow-blue-900/25">
-                      Create Login Account
+                      Save User
                     </button>
                   </form>
                 </div>
@@ -2356,7 +2407,7 @@ CREATE TABLE IF NOT EXISTS streams (
                   <div className="mb-4">
                     <input 
                       type="text"
-                      placeholder="Search users by username or email..."
+                      placeholder="Search users by username..."
                       value={userSearchQuery}
                       onChange={(e) => setUserSearchQuery(e.target.value)}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500/50 outline-none text-zinc-100 placeholder-zinc-500"
@@ -2368,16 +2419,14 @@ CREATE TABLE IF NOT EXISTS streams (
                   ) : usersList.length === 0 ? (
                     <div className="p-8 text-center text-zinc-500">No channel users found.</div>
                   ) : usersList.filter(u => 
-                      (u.username || '').toLowerCase().includes((userSearchQuery || '').toLowerCase()) || 
-                      (u.email || '').toLowerCase().includes((userSearchQuery || '').toLowerCase())
+                      (u.username || '').toLowerCase().includes((userSearchQuery || '').toLowerCase())
                     ).length === 0 ? (
                     <div className="p-8 text-center text-zinc-500">No matching users found.</div>
                   ) : (
                     <div className="space-y-4">
                       {usersList
                         .filter(u => 
-                          (u.username || '').toLowerCase().includes((userSearchQuery || '').toLowerCase()) || 
-                          (u.email || '').toLowerCase().includes((userSearchQuery || '').toLowerCase())
+                          (u.username || '').toLowerCase().includes((userSearchQuery || '').toLowerCase())
                         )
                         .map((user) => {
                         const assignedStream = streams.find(s => s.id === user.assigned_stream_id);
@@ -2399,7 +2448,6 @@ CREATE TABLE IF NOT EXISTS streams (
                                     {user.status || 'enabled'}
                                   </span>
                                 </div>
-                                <p className="text-xs text-zinc-400">{user.email}</p>
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
@@ -2407,7 +2455,6 @@ CREATE TABLE IF NOT EXISTS streams (
                                   onClick={() => {
                                     setEditingUserId(user.id);
                                     setEditUsername(user.username);
-                                    setEditEmail(user.email);
                                     setEditStatus(user.status || 'enabled');
                                     setEditAssignedStreamId(user.assigned_stream_id || '');
                                     setEditDisplayName(user.display_name || user.username);
@@ -2515,19 +2562,22 @@ CREATE TABLE IF NOT EXISTS streams (
                                     />
                                   </div>
                                   <div className="space-y-1">
-                                    <label className="text-[9px] font-bold text-zinc-500 uppercase">Email</label>
-                                    <input 
-                                      type="email" required value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
-                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
                                     <label className="text-[9px] font-bold text-zinc-500 uppercase">Reset Password (Optional)</label>
-                                    <input 
-                                      type="password" value={editPassword} onChange={(e) => setEditPassword(e.target.value)}
-                                      placeholder="Leave blank to keep same"
-                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none font-sans"
-                                    />
+                                    <div className="relative">
+                                      <input 
+                                        type={showEditPassword ? "text" : "password"} value={editPassword} onChange={(e) => setEditPassword(e.target.value)}
+                                        placeholder="Leave blank to keep same"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-2 pr-8 py-1.5 text-xs text-zinc-100 outline-none font-sans"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowEditPassword(!showEditPassword)}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 p-1"
+                                        title={showEditPassword ? "Hide password" : "Show password"}
+                                      >
+                                        {showEditPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                      </button>
+                                    </div>
                                   </div>
                                   <div className="space-y-1">
                                     <label className="text-[9px] font-bold text-zinc-500 uppercase">Account Role</label>
@@ -2540,7 +2590,7 @@ CREATE TABLE IF NOT EXISTS streams (
                                       <option value="admin">Administrator (Super Admin)</option>
                                     </select>
                                   </div>
-                                  <div className="space-y-1">
+                                  <div className="space-y-1 sm:col-span-2">
                                     <label className="text-[9px] font-bold text-zinc-500 uppercase">Account Status</label>
                                     <select 
                                       value={editStatus} onChange={(e: any) => setEditStatus(e.target.value)}

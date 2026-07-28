@@ -886,23 +886,23 @@ segment3.ts
   });
 
   app.post('/api/auth/login', async (req, res) => {
-    const loginIdentifier = (req.body.username || req.body.email || req.body.identifier || '').toString().trim();
+    const cleanUsername = String(req.body.username || req.body.identifier || '').trim();
     const rawPassword = req.body.password ? String(req.body.password) : '';
 
-    if (!loginIdentifier || !rawPassword) {
-      console.warn(`[Auth API] Login attempt rejected: Missing ${!loginIdentifier ? 'username/email identifier' : 'password'} in payload.`);
-      return res.status(400).json({ error: 'Username or email and password are required' });
+    if (!cleanUsername || !rawPassword) {
+      console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
+      return res.status(400).json({ error: 'Username and password are required' });
     }
 
     try {
-      const user = await db.getUserByUsername(loginIdentifier);
+      const user = await db.getUserByUsername(cleanUsername);
       if (!user) {
-        console.warn(`[Auth API] Login failed [User Lookup]: No user found matching identifier "${loginIdentifier}".`);
+        console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
         return res.status(400).json({ error: 'Invalid username or password' });
       }
 
       if (user.status === 'disabled') {
-        console.warn(`[Auth API] Login failed [Status Check]: User "${user.username}" (ID: ${user.id}) account is disabled.`);
+        console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
         return res.status(403).json({ error: 'Access denied: Your account is currently disabled' });
       }
 
@@ -910,11 +910,11 @@ segment3.ts
       try {
         isMatch = await bcrypt.compare(rawPassword, user.password_hash);
       } catch (bcryptErr) {
-        console.error(`[Auth API] Login failed [Password Comparison Error]: Error comparing hash for user "${user.username}":`, bcryptErr);
+        console.error(`Error comparing hash for user "${user.username}":`, bcryptErr);
       }
 
       if (!isMatch) {
-        console.warn(`[Auth API] Login failed [Password Comparison]: Password mismatch for user "${user.username}".`);
+        console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
         return res.status(400).json({ error: 'Invalid username or password' });
       }
 
@@ -925,16 +925,17 @@ segment3.ts
       try {
         token = jwt.sign({ id: Number(user.id), username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
       } catch (jwtErr) {
-        console.error(`[Auth API] Login failed [JWT Creation]: Failed to sign JWT for user "${user.username}":`, jwtErr);
+        console.error(`Failed to sign JWT for user "${user.username}":`, jwtErr);
         return res.status(500).json({ error: 'Server error during token generation' });
       }
+
+      console.log(`[Auth] Login success for user "${user.username}" (role: ${user.role}, IP: ${req.ip || '0.0.0.0'})`);
 
       res.json({
         token,
         user: {
           id: Number(user.id),
           username: user.username,
-          email: user.email,
           role: user.role,
           createdAt: user.created_at,
           status: user.status || 'enabled',
@@ -943,7 +944,7 @@ segment3.ts
         }
       });
     } catch (err) {
-      console.error('[Auth API] Login failed [Server Exception]: Unexpected error during login process:', err);
+      console.error('Unexpected error during login process:', err);
       res.status(500).json({ error: 'Server error during login' });
     }
   });
@@ -960,7 +961,6 @@ segment3.ts
       res.json({
         id: Number(user.id),
         username: user.username,
-        email: user.email,
         role: user.role,
         createdAt: user.created_at,
         status: user.status || 'enabled',
@@ -972,7 +972,6 @@ segment3.ts
     }
   });
 
-  // ----------------------------------------------------
   // ----------------------------------------------------
   // USER MANAGEMENT API ENDPOINTS (ADMIN ONLY)
   // ----------------------------------------------------
@@ -993,7 +992,6 @@ segment3.ts
         return {
           id: Number(u.id),
           username: u.username,
-          email: u.email,
           role: u.role,
           created_at: u.created_at,
           status: u.status || 'enabled',
@@ -1009,21 +1007,17 @@ segment3.ts
     }
   });
 
-  app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-    const { username, email, password, assigned_stream_id, role, display_name } = req.body;
-    if (!username || !email || !password) {
-      return res.status(400).json({ error: 'Username, email, and password are required' });
+  app.post('/api/users', authenticateToken, requireAdmin, async (req: any, res) => {
+    const { username, password, assigned_stream_id, role, display_name } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
     }
 
     const cleanUsername = String(username).trim();
-    const cleanEmail = String(email).trim();
     const rawPassword = String(password);
 
     if (cleanUsername.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters long' });
-    }
-    if (!cleanEmail.includes('@')) {
-      return res.status(400).json({ error: 'Please enter a valid email address' });
     }
     if (rawPassword.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters long' });
@@ -1035,11 +1029,6 @@ segment3.ts
         return res.status(400).json({ error: 'Username already exists' });
       }
 
-      const existingUserByEmail = await db.getUserByEmail(cleanEmail);
-      if (existingUserByEmail && existingUserByEmail.email.toLowerCase() === cleanEmail.toLowerCase()) {
-        return res.status(400).json({ error: 'Email address already in use' });
-      }
-
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(rawPassword, salt);
 
@@ -1047,17 +1036,17 @@ segment3.ts
       const finalDisplayName = display_name || cleanUsername;
       const newUser = await db.createUser(
         cleanUsername,
-        cleanEmail,
         passwordHash,
         userRole,
         assigned_stream_id || null,
         finalDisplayName
       );
 
+      console.log(`[User Management] User created: "${newUser.username}" (role: ${newUser.role}) by admin "${req.user?.username || 'admin'}"`);
+
       res.status(201).json({
         id: Number(newUser.id),
         username: newUser.username,
-        email: newUser.email,
         role: newUser.role,
         created_at: newUser.created_at,
         status: newUser.status || 'enabled',
@@ -1076,7 +1065,7 @@ segment3.ts
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
-    const { username, email, password, status, assigned_stream_id, role, display_name } = req.body;
+    const { username, password, status, assigned_stream_id, role, display_name } = req.body;
 
     try {
       const user = await db.getUserById(userId);
@@ -1096,17 +1085,6 @@ segment3.ts
         }
         updates.username = cleanedUsername;
       }
-      if (email !== undefined) {
-        const cleanedEmail = String(email).trim();
-        if (!cleanedEmail || !cleanedEmail.includes('@')) {
-          return res.status(400).json({ error: 'Please enter a valid email address' });
-        }
-        const otherEmail = await db.getUserByEmail(cleanedEmail);
-        if (otherEmail && Number(otherEmail.id) !== userId && otherEmail.email.toLowerCase() === cleanedEmail.toLowerCase()) {
-          return res.status(400).json({ error: 'Email address already in use' });
-        }
-        updates.email = cleanedEmail;
-      }
       if (password) {
         const rawPassword = String(password);
         if (rawPassword.length < 6) {
@@ -1116,6 +1094,7 @@ segment3.ts
         updates.password_hash = await bcrypt.hash(rawPassword, salt);
         forcedPasswordResets.delete(userId);
         saveForcedResets();
+        console.log(`[User Management] Password reset for user "${user.username}" (ID: ${userId}) by admin "${req.user?.username || 'admin'}"`);
       }
       if (status !== undefined) {
         if (status !== 'enabled' && status !== 'disabled') {
@@ -1169,7 +1148,6 @@ segment3.ts
       res.json({
         id: Number(updated.id),
         username: updated.username,
-        email: updated.email,
         role: updated.role,
         created_at: updated.created_at,
         status: updated.status || 'enabled',
@@ -1212,6 +1190,9 @@ segment3.ts
       if (!success) {
         return res.status(404).json({ error: 'User not found' });
       }
+
+      console.log(`[User Management] User deleted: "${user.username}" (ID: ${userId}) by admin "${req.user?.username || 'admin'}"`);
+
       res.json({ message: 'User deleted successfully' });
     } catch (err) {
       console.error('Error deleting user:', err);
@@ -1740,7 +1721,7 @@ segment3.ts
         await db.deleteUser(conflictUser.id);
       }
       
-      await db.createUser(username, `${username}@streampulse.io`, passwordHash, 'admin');
+      await db.createUser(username, passwordHash, 'admin');
 
       // 2. Set default deployment mode to 'auto' and empty domain on clean install
       serverSettings.deploymentMode = 'auto';
@@ -4019,10 +4000,10 @@ segment3.ts
       if (!users || users.length === 0) {
         console.log('[Boot Init] No users found. Initializing default administrator account...');
         const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-        const adminPassword = process.env.ADMIN_PASSWORD || 'ChangeThisImmediately';
+        const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(adminPassword, salt);
-        await db.createUser(adminUsername, `${adminUsername}@streampulse.io`, hash, 'admin');
+        await db.createUser(adminUsername, hash, 'admin');
         console.log(`[Boot Init] Default admin user created (Username: ${adminUsername})`);
       }
 
