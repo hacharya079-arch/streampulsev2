@@ -1253,6 +1253,131 @@ ${reps}    </AdaptationSet>
   });
 
   // ----------------------------------------------------
+  // ADMIN PROFILE MANAGEMENT ENDPOINTS
+  // ----------------------------------------------------
+  const handleAdminProfileUpdate = async (req: any, res: any) => {
+    try {
+      const adminId = Number(req.user?.id);
+      if (isNaN(adminId)) {
+        return res.status(400).json({ error: 'Invalid administrator ID in session token' });
+      }
+
+      const user = await db.getUserById(adminId);
+      if (!user) {
+        return res.status(404).json({ error: 'Administrator account not found' });
+      }
+
+      if (user.role !== 'admin') {
+        return res.status(403).json({ error: 'Access denied: Administrator privileges required' });
+      }
+
+      const { currentPassword, newUsername, newDisplayName, newPassword, confirmPassword } = req.body;
+
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required to verify identity and authorize profile changes' });
+      }
+
+      const isMatch = await bcrypt.compare(String(currentPassword), user.password_hash);
+      if (!isMatch) {
+        console.warn(`[Security Audit] Failed admin profile update attempt for "${user.username}" - Incorrect current password (IP: ${req.ip || '0.0.0.0'})`);
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
+
+      const updates: Partial<any> = {};
+
+      // 1. Process Username Change
+      if (newUsername !== undefined && newUsername !== null) {
+        const cleanedUsername = String(newUsername).trim();
+        if (cleanedUsername.length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+        }
+
+        if (cleanedUsername.toLowerCase() !== user.username.toLowerCase()) {
+          const existingUser = await db.getUserByUsername(cleanedUsername);
+          if (existingUser && Number(existingUser.id) !== adminId && existingUser.username.toLowerCase() === cleanedUsername.toLowerCase()) {
+            return res.status(400).json({ error: 'Username is already in use by another account' });
+          }
+          updates.username = cleanedUsername;
+        }
+      }
+
+      // 2. Process Display Name Change
+      if (newDisplayName !== undefined && newDisplayName !== null) {
+        updates.display_name = String(newDisplayName).trim();
+      }
+
+      // 3. Process Password Change
+      if (newPassword) {
+        const rawNewPassword = String(newPassword);
+        const rawConfirmPassword = String(confirmPassword || '');
+
+        if (rawNewPassword !== rawConfirmPassword) {
+          return res.status(400).json({ error: 'New password and confirmation password do not match' });
+        }
+
+        const minLength = rawNewPassword.length >= 12;
+        const hasUpper = /[A-Z]/.test(rawNewPassword);
+        const hasLower = /[a-z]/.test(rawNewPassword);
+        const hasNumber = /[0-9]/.test(rawNewPassword);
+        const hasSpecial = /[^A-Za-z0-9]/.test(rawNewPassword);
+
+        if (!minLength || !hasUpper || !hasLower || !hasNumber || !hasSpecial) {
+          return res.status(400).json({
+            error: 'New password does not meet security requirements. It must be at least 12 characters and contain uppercase, lowercase, number, and special character.'
+          });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        updates.password_hash = await bcrypt.hash(rawNewPassword, salt);
+        forcedPasswordResets.delete(adminId);
+        saveForcedResets();
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: 'No profile changes provided' });
+      }
+
+      const updated = await db.updateUser(adminId, updates);
+      if (!updated) {
+        return res.status(500).json({ error: 'Failed to update admin profile in database' });
+      }
+
+      const token = jwt.sign(
+        { id: Number(updated.id), username: updated.username, role: updated.role },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      console.log(`[Security Audit] Admin profile updated successfully for user "${updated.username}" (ID: ${updated.id}, IP: ${req.ip || '0.0.0.0'})`);
+
+      try {
+        await db.addDeviceLog('system', 'info', `[Audit] Admin profile updated for account "${updated.username}"`);
+      } catch (_) {}
+
+      res.json({
+        message: 'Admin profile updated successfully',
+        token,
+        user: {
+          id: Number(updated.id),
+          username: updated.username,
+          role: updated.role,
+          created_at: updated.created_at,
+          status: updated.status || 'enabled',
+          assigned_stream_id: updated.assigned_stream_id || null,
+          display_name: updated.display_name || null,
+          mustResetPassword: false
+        }
+      });
+    } catch (err) {
+      console.error('Error updating admin profile:', err);
+      res.status(500).json({ error: 'Failed to update admin profile' });
+    }
+  };
+
+  app.put('/api/admin/profile', authenticateToken, requireAdmin, handleAdminProfileUpdate);
+  app.post('/api/admin/profile/update', authenticateToken, requireAdmin, handleAdminProfileUpdate);
+
+  // ----------------------------------------------------
   // DYNAMIC ENDPOINT & PLAYBACK URL RESOLUTION SERVICES
   // ----------------------------------------------------
   function isPrivateOrLoopbackIp(ip: string | null | undefined): boolean {

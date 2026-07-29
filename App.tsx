@@ -64,6 +64,7 @@ import { StreamTestHub } from './components/StreamTestHub';
 import { DeviceManager } from './components/DeviceManager';
 import { SettingsPage } from './components/SettingsPage';
 import { SetupWizard } from './components/SetupWizard';
+import { AdminProfile } from './components/AdminProfile';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
@@ -94,7 +95,7 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users' | 'admin_profile'>('dashboard');
   const [streams, setStreams] = useState<StreamSession[]>([]);
   
   const [detectedPublicIp, setDetectedPublicIp] = useState<string>('Detecting...');
@@ -1570,6 +1571,13 @@ CREATE TABLE IF NOT EXISTS streams (
         {isAdmin && (
           <>
             <button 
+              onClick={() => setActiveTab('admin_profile')}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all ${activeTab === 'admin_profile' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-zinc-400 hover:bg-zinc-900'}`}
+            >
+              <Shield className="w-5 h-5 shrink-0 text-blue-400" />
+              <span className="truncate">Admin Profile</span>
+            </button>
+            <button 
               onClick={() => setActiveTab('users')}
               className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all ${activeTab === 'users' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-zinc-400 hover:bg-zinc-900'}`}
             >
@@ -1757,15 +1765,30 @@ CREATE TABLE IF NOT EXISTS streams (
         {/* Sidebar Desktop Nav */}
         <aside className="w-64 shrink-0 hidden lg:flex flex-col gap-2">
           {currentUser && (
-            <div className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-4 mb-4 flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-600/15 rounded-full flex items-center justify-center border border-blue-500/20 shrink-0">
+            <div 
+              onClick={() => currentUser?.role === 'admin' && setActiveTab('admin_profile')}
+              title={currentUser?.role === 'admin' ? "Click to manage Admin Profile" : undefined}
+              className={`bg-zinc-900 border border-zinc-800/80 rounded-xl p-4 mb-4 flex items-center gap-3 ${
+                currentUser?.role === 'admin' ? 'cursor-pointer hover:border-blue-500/50 transition-colors group' : ''
+              }`}
+            >
+              <div className="w-9 h-9 bg-blue-600/15 rounded-full flex items-center justify-center border border-blue-500/20 shrink-0 group-hover:bg-blue-600/25 transition-colors">
                 <User className="w-4 h-4 text-blue-500" />
               </div>
               <div className="min-w-0 flex-1">
-                <h4 className="text-xs font-bold text-zinc-100 truncate">{currentUser.username}</h4>
+                <h4 className="text-xs font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors">
+                  {currentUser.display_name || currentUser.username}
+                </h4>
                 <p className="text-[10px] text-zinc-500 capitalize">{currentUser.role} Account</p>
               </div>
-              <button onClick={handleLogout} className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/5 rounded-lg transition-colors">
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleLogout();
+                }} 
+                className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/5 rounded-lg transition-colors"
+                title="Log Out"
+              >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
@@ -2470,6 +2493,18 @@ CREATE TABLE IF NOT EXISTS streams (
             </>
           )}
 
+          {activeTab === 'admin_profile' && currentUser?.role === 'admin' && (
+            <AdminProfile
+              currentUser={currentUser}
+              fetchWithNetworkHeaders={fetchWithNetworkHeaders}
+              onUpdateCurrentUser={(updatedUser, newToken) => {
+                localStorage.setItem('streampulse_jwt', newToken);
+                setToken(newToken);
+                setCurrentUser(updatedUser);
+              }}
+            />
+          )}
+
           {activeTab === 'users' && currentUser?.role === 'admin' && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="flex flex-col gap-2">
@@ -3117,6 +3152,10 @@ CREATE TABLE IF NOT EXISTS streams (
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'dashboard' ? 'text-blue-500' : 'text-zinc-500'}`}>
           <LayoutDashboard className="w-5 h-5" />
           <span className="text-[9px] font-bold uppercase">Admin</span>
+        </button>
+        <button onClick={() => setActiveTab('admin_profile')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'admin_profile' ? 'text-blue-500' : 'text-zinc-500'}`}>
+          <Shield className="w-5 h-5" />
+          <span className="text-[9px] font-bold uppercase">Profile</span>
         </button>
         <button onClick={() => setActiveTab('users')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'users' ? 'text-blue-500' : 'text-zinc-500'}`}>
           <Users className="w-5 h-5" />
