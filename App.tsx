@@ -65,6 +65,7 @@ import { DeviceManager } from './components/DeviceManager';
 import { SettingsPage } from './components/SettingsPage';
 import { SetupWizard } from './components/SetupWizard';
 import { AdminProfile } from './components/AdminProfile';
+import { UserProfile } from './components/UserProfile';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
@@ -95,7 +96,7 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users' | 'admin_profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users' | 'admin_profile' | 'user_profile'>('dashboard');
   const [streams, setStreams] = useState<StreamSession[]>([]);
   
   const [detectedPublicIp, setDetectedPublicIp] = useState<string>('Detecting...');
@@ -1568,6 +1569,15 @@ CREATE TABLE IF NOT EXISTS streams (
           <LayoutDashboard className="w-5 h-5 shrink-0" />
           <span className="truncate">{isAdmin ? 'Admin Dashboard' : 'My Channel'}</span>
         </button>
+        {!isAdmin && (
+          <button 
+            onClick={() => setActiveTab('user_profile')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all ${activeTab === 'user_profile' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-zinc-400 hover:bg-zinc-900'}`}
+          >
+            <User className="w-5 h-5 shrink-0 text-blue-400" />
+            <span className="truncate">My Profile</span>
+          </button>
+        )}
         {isAdmin && (
           <>
             <button 
@@ -1766,11 +1776,9 @@ CREATE TABLE IF NOT EXISTS streams (
         <aside className="w-64 shrink-0 hidden lg:flex flex-col gap-2">
           {currentUser && (
             <div 
-              onClick={() => currentUser?.role === 'admin' && setActiveTab('admin_profile')}
-              title={currentUser?.role === 'admin' ? "Click to manage Admin Profile" : undefined}
-              className={`bg-zinc-900 border border-zinc-800/80 rounded-xl p-4 mb-4 flex items-center gap-3 ${
-                currentUser?.role === 'admin' ? 'cursor-pointer hover:border-blue-500/50 transition-colors group' : ''
-              }`}
+              onClick={() => setActiveTab(currentUser?.role === 'admin' ? 'admin_profile' : 'user_profile')}
+              title="Click to manage profile"
+              className="bg-zinc-900 border border-zinc-800/80 rounded-xl p-4 mb-4 flex items-center gap-3 cursor-pointer hover:border-blue-500/50 transition-colors group"
             >
               <div className="w-9 h-9 bg-blue-600/15 rounded-full flex items-center justify-center border border-blue-500/20 shrink-0 group-hover:bg-blue-600/25 transition-colors">
                 <User className="w-4 h-4 text-blue-500" />
@@ -2493,6 +2501,18 @@ CREATE TABLE IF NOT EXISTS streams (
             </>
           )}
 
+          {activeTab === 'user_profile' && (
+            <UserProfile
+              currentUser={currentUser}
+              fetchWithNetworkHeaders={fetchWithNetworkHeaders}
+              onUpdateCurrentUser={(updatedUser, newToken) => {
+                localStorage.setItem('streampulse_jwt', newToken);
+                setToken(newToken);
+                setCurrentUser(updatedUser);
+              }}
+            />
+          )}
+
           {activeTab === 'admin_profile' && currentUser?.role === 'admin' && (
             <AdminProfile
               currentUser={currentUser}
@@ -3126,7 +3146,7 @@ CREATE TABLE IF NOT EXISTS streams (
             />
           )}
 
-          {currentUser?.role === 'user' && activeTab !== 'dashboard' && (
+          {currentUser?.role === 'user' && activeTab !== 'dashboard' && activeTab !== 'user_profile' && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto my-12 shadow-xl">
               <div className="w-12 h-12 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center mx-auto text-red-400">
                 <Shield className="w-6 h-6" />
@@ -3146,7 +3166,21 @@ CREATE TABLE IF NOT EXISTS streams (
         </div>
       </main>
 
-      {/* Mobile Navigation */}
+      {/* Mobile Navigation for Standard Users */}
+      {currentUser?.role === 'user' && (
+        <nav className="fixed bottom-0 left-0 right-0 bg-zinc-900/90 backdrop-blur-xl border-t border-zinc-800 flex items-center justify-around px-2 py-3 lg:hidden z-[60] shadow-[0_-8px_30px_rgb(0,0,0,0.12)]">
+          <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'dashboard' ? 'text-blue-500' : 'text-zinc-500'}`}>
+            <LayoutDashboard className="w-5 h-5" />
+            <span className="text-[9px] font-bold uppercase">My Channel</span>
+          </button>
+          <button onClick={() => setActiveTab('user_profile')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'user_profile' ? 'text-blue-500' : 'text-zinc-500'}`}>
+            <User className="w-5 h-5" />
+            <span className="text-[9px] font-bold uppercase">My Profile</span>
+          </button>
+        </nav>
+      )}
+
+      {/* Mobile Navigation for Admins */}
       {currentUser?.role === 'admin' && (
         <nav className="fixed bottom-0 left-0 right-0 bg-zinc-900/90 backdrop-blur-xl border-t border-zinc-800 flex items-center justify-around px-2 py-3 lg:hidden z-[60] shadow-[0_-8px_30px_rgb(0,0,0,0.12)]">
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'dashboard' ? 'text-blue-500' : 'text-zinc-500'}`}>

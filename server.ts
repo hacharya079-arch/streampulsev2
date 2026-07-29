@@ -1378,6 +1378,186 @@ ${reps}    </AdaptationSet>
   app.post('/api/admin/profile/update', authenticateToken, requireAdmin, handleAdminProfileUpdate);
 
   // ----------------------------------------------------
+  // USER PROFILE MANAGEMENT ENDPOINTS
+  // ----------------------------------------------------
+  app.get('/api/user/profile', authenticateToken, async (req: any, res: any) => {
+    try {
+      const userId = Number(req.user?.id);
+      if (isNaN(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID in session token' });
+      }
+
+      const user = await db.getUserById(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User account not found' });
+      }
+
+      let historyArray: any[] = [];
+      if (typeof user.login_history === 'string' && user.login_history.trim()) {
+        try {
+          historyArray = JSON.parse(user.login_history);
+        } catch (e) {
+          historyArray = [];
+        }
+      } else if (Array.isArray(user.login_history)) {
+        historyArray = user.login_history;
+      }
+
+      const lastLoginAt = historyArray.length > 0 ? (historyArray[0]?.timestamp || null) : null;
+
+      res.json({
+        user: {
+          id: Number(user.id),
+          username: user.username,
+          display_name: user.display_name || user.username,
+          role: user.role,
+          created_at: user.created_at,
+          last_login_at: lastLoginAt,
+          status: user.status || 'enabled',
+          assigned_stream_id: user.assigned_stream_id || null,
+          login_history: historyArray,
+          mustResetPassword: forcedPasswordResets.has(Number(user.id))
+        }
+      });
+    } catch (err) {
+      console.error('Error fetching user profile:', err);
+      res.status(500).json({ error: 'Failed to fetch user profile' });
+    }
+  });
+
+  const handleUserProfileUpdate = async (req: any, res: any) => {
+    try {
+      const userId = Number(req.user?.id);
+      if (isNaN(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID in session token' });
+      }
+
+      const user = await db.getUserById(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User account not found' });
+      }
+
+      if (user.status === 'disabled') {
+        return res.status(403).json({ error: 'Account disabled: Profile changes disallowed' });
+      }
+
+      const { currentPassword, newUsername, newDisplayName, newPassword, confirmPassword } = req.body;
+
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required to verify identity and authorize profile changes' });
+      }
+
+      const isMatch = await bcrypt.compare(String(currentPassword), user.password_hash);
+      if (!isMatch) {
+        console.warn(`[Security Audit] Failed user profile update attempt for "${user.username}" - Incorrect current password (IP: ${req.ip || '0.0.0.0'})`);
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
+
+      const updates: Partial<any> = {};
+
+      // 1. Username Update
+      if (newUsername !== undefined && newUsername !== null) {
+        const cleanedUsername = String(newUsername).trim();
+        if (cleanedUsername.length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+        }
+
+        if (cleanedUsername.toLowerCase() !== user.username.toLowerCase()) {
+          const existingUser = await db.getUserByUsername(cleanedUsername);
+          if (existingUser && Number(existingUser.id) !== userId && existingUser.username.toLowerCase() === cleanedUsername.toLowerCase()) {
+            return res.status(400).json({ error: 'Username is already in use by another account' });
+          }
+          updates.username = cleanedUsername;
+        }
+      }
+
+      // 2. Display Name Update
+      if (newDisplayName !== undefined && newDisplayName !== null) {
+        updates.display_name = String(newDisplayName).trim();
+      }
+
+      // 3. Password Update
+      if (newPassword) {
+        const rawNewPassword = String(newPassword);
+        const rawConfirmPassword = String(confirmPassword || '');
+
+        if (rawNewPassword !== rawConfirmPassword) {
+          return res.status(400).json({ error: 'New password and confirmation password do not match' });
+        }
+
+        const minLength = rawNewPassword.length >= 12;
+        const hasUpper = /[A-Z]/.test(rawNewPassword);
+        const hasLower = /[a-z]/.test(rawNewPassword);
+        const hasNumber = /[0-9]/.test(rawNewPassword);
+        const hasSpecial = /[^A-Za-z0-9]/.test(rawNewPassword);
+
+        if (!minLength || !hasUpper || !hasLower || !hasNumber || !hasSpecial) {
+          return res.status(400).json({
+            error: 'New password does not meet security requirements. It must be at least 12 characters and contain uppercase, lowercase, number, and special character.'
+          });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        updates.password_hash = await bcrypt.hash(rawNewPassword, salt);
+        forcedPasswordResets.delete(userId);
+        saveForcedResets();
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: 'No profile changes provided' });
+      }
+
+      const updated = await db.updateUser(userId, updates);
+      if (!updated) {
+        return res.status(500).json({ error: 'Failed to update user profile in database' });
+      }
+
+      // Automatically issue updated session token so logout is not required
+      const token = jwt.sign(
+        { id: Number(updated.id), username: updated.username, role: updated.role },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      console.log(`[Security Audit] Profile updated successfully for user "${updated.username}" (ID: ${updated.id}, IP: ${req.ip || '0.0.0.0'})`);
+
+      let historyArray: any[] = [];
+      if (typeof updated.login_history === 'string' && updated.login_history.trim()) {
+        try {
+          historyArray = JSON.parse(updated.login_history);
+        } catch (e) {
+          historyArray = [];
+        }
+      } else if (Array.isArray(updated.login_history)) {
+        historyArray = updated.login_history;
+      }
+      const lastLoginAt = historyArray.length > 0 ? (historyArray[0]?.timestamp || null) : null;
+
+      res.json({
+        message: 'Profile updated successfully',
+        token,
+        user: {
+          id: Number(updated.id),
+          username: updated.username,
+          display_name: updated.display_name || updated.username,
+          role: updated.role,
+          created_at: updated.created_at,
+          last_login_at: lastLoginAt,
+          status: updated.status || 'enabled',
+          assigned_stream_id: updated.assigned_stream_id || null,
+          mustResetPassword: false
+        }
+      });
+    } catch (err) {
+      console.error('Error updating user profile:', err);
+      res.status(500).json({ error: 'Failed to update user profile' });
+    }
+  };
+
+  app.put('/api/user/profile', authenticateToken, handleUserProfileUpdate);
+  app.post('/api/user/profile/update', authenticateToken, handleUserProfileUpdate);
+
+  // ----------------------------------------------------
   // DYNAMIC ENDPOINT & PLAYBACK URL RESOLUTION SERVICES
   // ----------------------------------------------------
   function isPrivateOrLoopbackIp(ip: string | null | undefined): boolean {
