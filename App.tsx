@@ -66,6 +66,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { SetupWizard } from './components/SetupWizard';
 import { AdminProfile } from './components/AdminProfile';
 import { UserProfile } from './components/UserProfile';
+import { AuditLogs } from './components/AuditLogs';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
@@ -96,7 +97,7 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users' | 'admin_profile' | 'user_profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'streams' | 'deploy' | 'infra' | 'settings' | 'stream_test' | 'devices' | 'users' | 'admin_profile' | 'user_profile' | 'audit_logs'>('dashboard');
   const [streams, setStreams] = useState<StreamSession[]>([]);
   
   const [detectedPublicIp, setDetectedPublicIp] = useState<string>('Detecting...');
@@ -1637,6 +1638,13 @@ CREATE TABLE IF NOT EXISTS streams (
               <Settings className="w-5 h-5 shrink-0" />
               <span className="truncate">Settings</span>
             </button>
+            <button 
+              onClick={() => setActiveTab('audit_logs')}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all ${activeTab === 'audit_logs' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-zinc-400 hover:bg-zinc-900'}`}
+            >
+              <FileText className="w-5 h-5 shrink-0 text-indigo-400" />
+              <span className="truncate">Audit Logs</span>
+            </button>
           </>
         )}
       </>
@@ -3146,6 +3154,13 @@ CREATE TABLE IF NOT EXISTS streams (
             />
           )}
 
+          {activeTab === 'audit_logs' && currentUser?.role === 'admin' && (
+            <AuditLogs
+              currentUser={currentUser}
+              fetchWithNetworkHeaders={fetchWithNetworkHeaders}
+            />
+          )}
+
           {currentUser?.role === 'user' && activeTab !== 'dashboard' && activeTab !== 'user_profile' && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto my-12 shadow-xl">
               <div className="w-12 h-12 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center mx-auto text-red-400">
@@ -3218,6 +3233,10 @@ CREATE TABLE IF NOT EXISTS streams (
         <button id="mobile-settings-btn" onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'settings' ? 'text-blue-500' : 'text-zinc-500'}`}>
           <Settings className="w-5 h-5" />
           <span className="text-[9px] font-bold uppercase">Settings</span>
+        </button>
+        <button onClick={() => setActiveTab('audit_logs')} className={`flex flex-col items-center gap-1 flex-1 ${activeTab === 'audit_logs' ? 'text-blue-500' : 'text-zinc-500'}`}>
+          <FileText className="w-5 h-5" />
+          <span className="text-[9px] font-bold uppercase">Audit</span>
         </button>
       </nav>
       )}

@@ -144,6 +144,19 @@ export interface DeviceScheduleRecord {
   enabled: boolean;
 }
 
+export interface AuditLogRecord {
+  id: string;
+  timestamp: string;
+  username: string;
+  user_role: string;
+  action: string;
+  module: string; // 'Authentication' | 'User Management' | 'Streaming' | 'Settings' | 'System'
+  ip_address: string;
+  user_agent: string;
+  result: 'success' | 'failed';
+  details?: string;
+}
+
 // In-Memory Fallback State (persisted to data/db.json)
 interface LocalDBState {
   users: UserRecord[];
@@ -154,6 +167,7 @@ interface LocalDBState {
   playbackHistory: PlaybackHistoryRecord[];
   deviceLogs: DeviceLogRecord[];
   deviceSchedules: DeviceScheduleRecord[];
+  auditLogs?: AuditLogRecord[];
   appSettings?: Record<string, string>;
 }
 
@@ -197,6 +211,7 @@ let localState: LocalDBState = {
   playbackHistory: [],
   deviceLogs: [],
   deviceSchedules: [],
+  auditLogs: [],
   appSettings: {}
 };
 
@@ -220,6 +235,7 @@ if (fs.existsSync(JSON_DB_PATH)) {
       playbackHistory: parsed.playbackHistory || [],
       deviceLogs: parsed.deviceLogs || [],
       deviceSchedules: parsed.deviceSchedules || [],
+      auditLogs: parsed.auditLogs || [],
       appSettings: parsed.appSettings || {}
     };
   } catch (err) {
@@ -458,6 +474,25 @@ export const db = {
               value TEXT NOT NULL,
               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
+              id VARCHAR(50) PRIMARY KEY,
+              timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              username VARCHAR(100) NOT NULL,
+              user_role VARCHAR(50) NOT NULL,
+              action VARCHAR(100) NOT NULL,
+              module VARCHAR(100) NOT NULL,
+              ip_address VARCHAR(50) DEFAULT '0.0.0.0',
+              user_agent TEXT,
+              result VARCHAR(20) NOT NULL,
+              details TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username);
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_module ON audit_logs(module);
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_result ON audit_logs(result);
           `);
 
           console.log('[Database] PostgreSQL Database tables verified/created successfully.');
@@ -1683,6 +1718,207 @@ export const db = {
       return out;
     }
     return (localState as any).appSettings || {};
+  },
+
+  // --- AUDIT LOGGING SYSTEM ---
+  addAuditLog: async (entry: Omit<AuditLogRecord, 'id' | 'timestamp'> & { timestamp?: string }): Promise<AuditLogRecord> => {
+    const id = 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    const timestamp = entry.timestamp || new Date().toISOString();
+    const record: AuditLogRecord = {
+      id,
+      timestamp,
+      username: entry.username || 'system',
+      user_role: entry.user_role || 'system',
+      action: entry.action || 'Unknown Action',
+      module: entry.module || 'System',
+      ip_address: entry.ip_address || '0.0.0.0',
+      user_agent: entry.user_agent || '',
+      result: entry.result || 'success',
+      details: entry.details || ''
+    };
+
+    if (usePostgres && pgPool) {
+      try {
+        await pgPool.query(
+          `INSERT INTO audit_logs (id, timestamp, username, user_role, action, module, ip_address, user_agent, result, details)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [record.id, new Date(record.timestamp), record.username, record.user_role, record.action, record.module, record.ip_address, record.user_agent, record.result, record.details]
+        );
+      } catch (err) {
+        console.error('[Audit DB] Failed to insert audit log into Postgres:', err);
+      }
+    } else {
+      if (!localState.auditLogs) localState.auditLogs = [];
+      localState.auditLogs.unshift(record);
+      if (localState.auditLogs.length > 5000) {
+        localState.auditLogs = localState.auditLogs.slice(0, 5000);
+      }
+      saveLocalState();
+    }
+
+    return record;
+  },
+
+  getAuditLogs: async (params: {
+    search?: string;
+    module?: string;
+    action?: string;
+    result?: string;
+    username?: string;
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{ logs: AuditLogRecord[]; totalCount: number; page: number; totalPages: number }> => {
+    const page = Math.max(1, Number(params.page) || 1);
+    const limit = Math.max(1, Math.min(500, Number(params.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    if (usePostgres && pgPool) {
+      const conditions: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      if (params.search && params.search.trim()) {
+        const s = `%${params.search.trim()}%`;
+        conditions.push(`(username ILIKE $${idx} OR action ILIKE $${idx} OR module ILIKE $${idx} OR ip_address ILIKE $${idx} OR details ILIKE $${idx})`);
+        values.push(s);
+        idx++;
+      }
+      if (params.module && params.module !== 'all') {
+        conditions.push(`module = $${idx}`);
+        values.push(params.module);
+        idx++;
+      }
+      if (params.action && params.action !== 'all') {
+        conditions.push(`action = $${idx}`);
+        values.push(params.action);
+        idx++;
+      }
+      if (params.result && params.result !== 'all') {
+        conditions.push(`result = $${idx}`);
+        values.push(params.result);
+        idx++;
+      }
+      if (params.username && params.username !== 'all') {
+        conditions.push(`username = $${idx}`);
+        values.push(params.username);
+        idx++;
+      }
+      if (params.startDate) {
+        conditions.push(`timestamp >= $${idx}`);
+        values.push(new Date(params.startDate));
+        idx++;
+      }
+      if (params.endDate) {
+        conditions.push(`timestamp <= $${idx}`);
+        values.push(new Date(params.endDate));
+        idx++;
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const countSql = `SELECT COUNT(*) FROM audit_logs ${whereClause}`;
+      const countRes = await pgPool.query(countSql, values);
+      const totalCount = parseInt(countRes.rows[0].count, 10) || 0;
+
+      const dataSql = `SELECT * FROM audit_logs ${whereClause} ORDER BY timestamp DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+      const dataRes = await pgPool.query(dataSql, [...values, limit, offset]);
+
+      const logs: AuditLogRecord[] = dataRes.rows.map(r => ({
+        id: r.id,
+        timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
+        username: r.username,
+        user_role: r.user_role,
+        action: r.action,
+        module: r.module,
+        ip_address: r.ip_address,
+        user_agent: r.user_agent || '',
+        result: r.result,
+        details: r.details || ''
+      }));
+
+      return {
+        logs,
+        totalCount,
+        page,
+        totalPages: Math.ceil(totalCount / limit) || 1
+      };
+    }
+
+    // JSON mode filtering
+    let filtered = [...(localState.auditLogs || [])];
+    if (params.search && params.search.trim()) {
+      const s = params.search.trim().toLowerCase();
+      filtered = filtered.filter(l =>
+        l.username.toLowerCase().includes(s) ||
+        l.action.toLowerCase().includes(s) ||
+        l.module.toLowerCase().includes(s) ||
+        (l.details && l.details.toLowerCase().includes(s)) ||
+        l.ip_address.toLowerCase().includes(s)
+      );
+    }
+    if (params.module && params.module !== 'all') {
+      filtered = filtered.filter(l => l.module === params.module);
+    }
+    if (params.action && params.action !== 'all') {
+      filtered = filtered.filter(l => l.action === params.action);
+    }
+    if (params.result && params.result !== 'all') {
+      filtered = filtered.filter(l => l.result === params.result);
+    }
+    if (params.username && params.username !== 'all') {
+      filtered = filtered.filter(l => l.username.toLowerCase() === params.username!.toLowerCase());
+    }
+    if (params.startDate) {
+      const startMs = new Date(params.startDate).getTime();
+      filtered = filtered.filter(l => new Date(l.timestamp).getTime() >= startMs);
+    }
+    if (params.endDate) {
+      const endMs = new Date(params.endDate).getTime();
+      filtered = filtered.filter(l => new Date(l.timestamp).getTime() <= endMs);
+    }
+
+    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    const totalCount = filtered.length;
+    const paginatedLogs = filtered.slice(offset, offset + limit);
+
+    return {
+      logs: paginatedLogs,
+      totalCount,
+      page,
+      totalPages: Math.ceil(totalCount / limit) || 1
+    };
+  },
+
+  getAuditRetentionDays: async (): Promise<number> => {
+    const val = await db.getAppSetting('audit_retention_days');
+    const num = parseInt(val || '90', 10);
+    return isNaN(num) || num <= 0 ? 90 : num;
+  },
+
+  setAuditRetentionDays: async (days: number): Promise<void> => {
+    const validDays = Math.max(1, Math.min(3650, days));
+    await db.setAppSetting('audit_retention_days', String(validDays));
+    await db.cleanupAuditLogs(validDays);
+  },
+
+  cleanupAuditLogs: async (retentionDays?: number): Promise<number> => {
+    const days = retentionDays !== undefined ? retentionDays : await db.getAuditRetentionDays();
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    if (usePostgres && pgPool) {
+      const res = await pgPool.query('DELETE FROM audit_logs WHERE timestamp < $1', [cutoff]);
+      return res.rowCount || 0;
+    } else {
+      if (!localState.auditLogs) return 0;
+      const initialLen = localState.auditLogs.length;
+      const cutoffMs = cutoff.getTime();
+      localState.auditLogs = localState.auditLogs.filter(l => new Date(l.timestamp).getTime() >= cutoffMs);
+      const removed = initialLen - localState.auditLogs.length;
+      if (removed > 0) saveLocalState();
+      return removed;
+    }
   },
 
   close: async (): Promise<void> => {

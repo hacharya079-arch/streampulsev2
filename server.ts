@@ -930,6 +930,48 @@ ${reps}    </AdaptationSet>
     }
   };
 
+  const logAudit = async (
+    req: any,
+    action: string,
+    module: string,
+    result: 'success' | 'failed',
+    details?: string,
+    overrideUser?: { username?: string; role?: string }
+  ) => {
+    try {
+      let username = overrideUser?.username;
+      let userRole = overrideUser?.role;
+
+      if (!username && req?.user) {
+        username = req.user.username;
+        userRole = req.user.role;
+      }
+
+      if (!username) {
+        username = req?.body?.username || req?.body?.identifier || 'anonymous';
+      }
+      if (!userRole) {
+        userRole = 'anonymous';
+      }
+
+      const ipAddress = (req?.headers?.['x-forwarded-for'] as string || req?.ip || req?.socket?.remoteAddress || '0.0.0.0').split(',')[0].trim();
+      const userAgent = (req?.headers?.['user-agent'] as string || 'Unknown').substring(0, 500);
+
+      await db.addAuditLog({
+        username: String(username),
+        user_role: String(userRole),
+        action: String(action),
+        module: String(module),
+        ip_address: String(ipAddress),
+        user_agent: String(userAgent),
+        result,
+        details: details || ''
+      });
+    } catch (err) {
+      console.error('[Audit Log Error]', err);
+    }
+  };
+
   // ----------------------------------------------------
   // AUTH API ENDPOINTS
   // ----------------------------------------------------
@@ -943,6 +985,7 @@ ${reps}    </AdaptationSet>
 
     if (!cleanUsername || !rawPassword) {
       console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
+      await logAudit(req, 'Failed Login', 'Authentication', 'failed', 'Missing username or password', { username: cleanUsername || 'anonymous', role: 'anonymous' });
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
@@ -950,11 +993,13 @@ ${reps}    </AdaptationSet>
       const user = await db.getUserByUsername(cleanUsername);
       if (!user) {
         console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
+        await logAudit(req, 'Failed Login', 'Authentication', 'failed', 'User account not found', { username: cleanUsername, role: 'anonymous' });
         return res.status(400).json({ error: 'Invalid username or password' });
       }
 
       if (user.status === 'disabled') {
         console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
+        await logAudit(req, 'Failed Login', 'Authentication', 'failed', 'Account is disabled', { username: cleanUsername, role: user.role });
         return res.status(403).json({ error: 'Access denied: Your account is currently disabled' });
       }
 
@@ -967,6 +1012,7 @@ ${reps}    </AdaptationSet>
 
       if (!isMatch) {
         console.warn(`[Auth] Login failure for username "${cleanUsername}" (IP: ${req.ip || '0.0.0.0'})`);
+        await logAudit(req, 'Failed Login', 'Authentication', 'failed', 'Incorrect password', { username: cleanUsername, role: user.role });
         return res.status(400).json({ error: 'Invalid username or password' });
       }
 
@@ -978,10 +1024,12 @@ ${reps}    </AdaptationSet>
         token = jwt.sign({ id: Number(user.id), username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
       } catch (jwtErr) {
         console.error(`Failed to sign JWT for user "${user.username}":`, jwtErr);
+        await logAudit(req, 'Failed Login', 'Authentication', 'failed', 'JWT token generation failed', { username: user.username, role: user.role });
         return res.status(500).json({ error: 'Server error during token generation' });
       }
 
       console.log(`[Auth] Login success for user "${user.username}" (role: ${user.role}, IP: ${req.ip || '0.0.0.0'})`);
+      await logAudit(req, 'Login', 'Authentication', 'success', `User authenticated successfully as ${user.role}`, { username: user.username, role: user.role });
 
       res.json({
         token,
@@ -998,6 +1046,15 @@ ${reps}    </AdaptationSet>
     } catch (err) {
       console.error('Unexpected error during login process:', err);
       res.status(500).json({ error: 'Server error during login' });
+    }
+  });
+
+  app.post('/api/auth/logout', authenticateToken, async (req: any, res) => {
+    try {
+      await logAudit(req, 'Logout', 'Authentication', 'success', 'User logged out');
+      res.json({ message: 'Logout recorded successfully' });
+    } catch (err) {
+      res.json({ message: 'Logged out' });
     }
   });
 
@@ -1095,6 +1152,7 @@ ${reps}    </AdaptationSet>
       );
 
       console.log(`[User Management] User created: "${newUser.username}" (role: ${newUser.role}) by admin "${req.user?.username || 'admin'}"`);
+      await logAudit(req, 'User Created', 'User Management', 'success', `Created user "${newUser.username}" with role ${newUser.role}`);
 
       res.status(201).json({
         id: Number(newUser.id),
@@ -1105,8 +1163,9 @@ ${reps}    </AdaptationSet>
         assigned_stream_id: newUser.assigned_stream_id || null,
         display_name: newUser.display_name || newUser.username
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error creating user:', err);
+      await logAudit(req, 'User Created', 'User Management', 'failed', 'Failed user creation: ' + (err?.message || 'Server error'));
       res.status(500).json({ error: 'Failed to create user' });
     }
   });
@@ -1147,6 +1206,7 @@ ${reps}    </AdaptationSet>
         forcedPasswordResets.delete(userId);
         saveForcedResets();
         console.log(`[User Management] Password reset for user "${user.username}" (ID: ${userId}) by admin "${req.user?.username || 'admin'}"`);
+        await logAudit(req, 'Password Reset', 'User Management', 'success', `Admin reset password for user "${user.username}" (ID: ${userId})`);
       }
       if (status !== undefined) {
         if (status !== 'enabled' && status !== 'disabled') {
@@ -1166,6 +1226,7 @@ ${reps}    </AdaptationSet>
           }
         }
         updates.status = status;
+        await logAudit(req, status === 'enabled' ? 'User Enabled' : 'User Disabled', 'User Management', 'success', `User account "${user.username}" (ID: ${userId}) set to ${status}`);
       }
       if (role !== undefined) {
         if (role !== 'admin' && role !== 'user') {
@@ -1185,6 +1246,7 @@ ${reps}    </AdaptationSet>
           }
         }
         updates.role = role;
+        await logAudit(req, 'Role Changed', 'User Management', 'success', `Changed role of user "${user.username}" (ID: ${userId}) to ${role}`);
       }
       if (assigned_stream_id !== undefined) {
         updates.assigned_stream_id = assigned_stream_id || null;
@@ -1244,6 +1306,7 @@ ${reps}    </AdaptationSet>
       }
 
       console.log(`[User Management] User deleted: "${user.username}" (ID: ${userId}) by admin "${req.user?.username || 'admin'}"`);
+      await logAudit(req, 'User Deleted', 'User Management', 'success', `Deleted user account "${user.username}" (ID: ${userId})`);
 
       res.json({ message: 'User deleted successfully' });
     } catch (err) {
@@ -1340,6 +1403,13 @@ ${reps}    </AdaptationSet>
       const updated = await db.updateUser(adminId, updates);
       if (!updated) {
         return res.status(500).json({ error: 'Failed to update admin profile in database' });
+      }
+
+      if (updates.username) {
+        await logAudit(req, 'Username Change', 'Authentication', 'success', `Admin changed username from "${user.username}" to "${updates.username}"`);
+      }
+      if (updates.password_hash) {
+        await logAudit(req, 'Password Change', 'Authentication', 'success', 'Admin updated password');
       }
 
       const token = jwt.sign(
@@ -1510,6 +1580,13 @@ ${reps}    </AdaptationSet>
       const updated = await db.updateUser(userId, updates);
       if (!updated) {
         return res.status(500).json({ error: 'Failed to update user profile in database' });
+      }
+
+      if (updates.username) {
+        await logAudit(req, 'Username Change', 'Authentication', 'success', `User changed username from "${user.username}" to "${updates.username}"`);
+      }
+      if (updates.password_hash) {
+        await logAudit(req, 'Password Change', 'Authentication', 'success', 'User updated password');
       }
 
       // Automatically issue updated session token so logout is not required
@@ -2418,6 +2495,16 @@ ${reps}    </AdaptationSet>
     }
 
     exec(command, (err, stdout, stderr) => {
+      const isSuccess = !err;
+      const actionName = action === 'restart_docker' ? 'Docker Restart'
+        : action === 'restart_ffmpeg' ? 'FFmpeg Restart'
+        : action === 'reload_nginx' ? 'Nginx Restart'
+        : action === 'restart_postgres' ? 'PostgreSQL Restart'
+        : action === 'restart_rtmp' ? 'RTMP Server Restart'
+        : `System Action (${action})`;
+      
+      logAudit(req, actionName, 'System', isSuccess ? 'success' : 'failed', err ? err.message : `Executed ${action}`);
+
       res.json({ 
         success: true, 
         message: `System action '${action}' triggered and executed.`,
@@ -2427,7 +2514,7 @@ ${reps}    </AdaptationSet>
   });
 
   // Backups & Export/Import
-  app.post('/api/backup/db', authenticateToken, requireAdmin, async (req, res) => {
+  app.post('/api/backup/db', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
       const backupPath = path.resolve(`./data/backup_db_${Date.now()}.json`);
       const allUsers = await db.getUsers();
@@ -2438,16 +2525,19 @@ ${reps}    </AdaptationSet>
       } else {
         fs.writeFileSync(backupPath, JSON.stringify(dump, null, 2));
       }
+      await logAudit(req, 'Backup Created', 'System', 'success', `Database backup created: ${path.basename(backupPath)}`);
       res.json({ success: true, message: 'Database backup compiled successfully.', file: path.basename(backupPath) });
     } catch (err: any) {
+      await logAudit(req, 'Backup Created', 'System', 'failed', 'Backup error: ' + err.message);
       res.status(500).json({ error: 'Database backup failed: ' + err.message });
     }
   });
 
-  app.post('/api/backup/restore', authenticateToken, requireAdmin, async (req, res) => {
+  app.post('/api/backup/restore', authenticateToken, requireAdmin, async (req: any, res) => {
     try {
       const files = fs.readdirSync('./data').filter(f => f.startsWith('backup_db_') && f.endsWith('.json'));
       if (files.length === 0) {
+        await logAudit(req, 'Restore Completed', 'System', 'failed', 'No backup files found');
         return res.status(400).json({ error: 'No database backup files found to restore.' });
       }
       files.sort().reverse();
@@ -2455,9 +2545,124 @@ ${reps}    </AdaptationSet>
       if (fs.existsSync('./data/db.json')) {
         fs.copyFileSync(latest, './data/db.json');
       }
+      await logAudit(req, 'Restore Completed', 'System', 'success', `Database restored from backup: ${files[0]}`);
       res.json({ success: true, message: `Database successfully restored from backup: ${files[0]}` });
     } catch (err: any) {
+      await logAudit(req, 'Restore Completed', 'System', 'failed', 'Restore failed: ' + err.message);
       res.status(500).json({ error: 'Database restore failed: ' + err.message });
+    }
+  });
+
+  // ----------------------------------------------------
+  // SYSTEM AUDIT LOG APIS (ADMIN ONLY, READ-ONLY)
+  // ----------------------------------------------------
+  app.get('/api/admin/audit-logs', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { search, module, action, result, username, startDate, endDate, page, limit } = req.query;
+      const data = await db.getAuditLogs({
+        search: search ? String(search) : undefined,
+        module: module ? String(module) : undefined,
+        action: action ? String(action) : undefined,
+        result: result ? String(result) : undefined,
+        username: username ? String(username) : undefined,
+        startDate: startDate ? String(startDate) : undefined,
+        endDate: endDate ? String(endDate) : undefined,
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20
+      });
+
+      const retentionDays = await db.getAuditRetentionDays();
+
+      res.json({
+        ...data,
+        retentionDays
+      });
+    } catch (err: any) {
+      console.error('Error fetching audit logs:', err);
+      res.status(500).json({ error: 'Failed to fetch audit logs: ' + err.message });
+    }
+  });
+
+  app.get('/api/admin/audit-logs/export', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { format = 'csv', search, module, action, result, username, startDate, endDate } = req.query;
+      const data = await db.getAuditLogs({
+        search: search ? String(search) : undefined,
+        module: module ? String(module) : undefined,
+        action: action ? String(action) : undefined,
+        result: result ? String(result) : undefined,
+        username: username ? String(username) : undefined,
+        startDate: startDate ? String(startDate) : undefined,
+        endDate: endDate ? String(endDate) : undefined,
+        page: 1,
+        limit: 10000
+      });
+
+      const exportTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+      if (format === 'json') {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=audit_logs_${exportTimestamp}.json`);
+        return res.json(data.logs);
+      }
+
+      // CSV export
+      const headers = ['Timestamp', 'Username', 'User Role', 'Action', 'Module', 'IP Address', 'Result', 'Details', 'User Agent'];
+      const escapeCsvField = (val: any) => {
+        const str = String(val ?? '').replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      const rows = data.logs.map(log => [
+        escapeCsvField(log.timestamp),
+        escapeCsvField(log.username),
+        escapeCsvField(log.user_role),
+        escapeCsvField(log.action),
+        escapeCsvField(log.module),
+        escapeCsvField(log.ip_address),
+        escapeCsvField(log.result),
+        escapeCsvField(log.details),
+        escapeCsvField(log.user_agent)
+      ].join(','));
+
+      const csvContent = [headers.join(','), ...rows].join('\n');
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename=audit_logs_${exportTimestamp}.csv`);
+      res.send(csvContent);
+    } catch (err: any) {
+      console.error('Error exporting audit logs:', err);
+      res.status(500).json({ error: 'Failed to export audit logs: ' + err.message });
+    }
+  });
+
+  app.put('/api/admin/audit-logs/retention', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { retentionDays } = req.body;
+      const days = Number(retentionDays);
+      if (isNaN(days) || days < 1 || days > 3650) {
+        return res.status(400).json({ error: 'Retention days must be a number between 1 and 3650 days' });
+      }
+
+      await db.setAuditRetentionDays(days);
+      await logAudit(req, 'Audit Retention Policy Updated', 'Settings', 'success', `Audit log retention period set to ${days} days`);
+
+      res.json({ message: `Audit retention policy updated to ${days} days`, retentionDays: days });
+    } catch (err: any) {
+      console.error('Error setting audit retention:', err);
+      res.status(500).json({ error: 'Failed to update audit retention policy' });
+    }
+  });
+
+  app.post('/api/admin/audit-logs/cleanup', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const cleanedCount = await db.cleanupAuditLogs();
+      await logAudit(req, 'Audit Logs Cleaned', 'System', 'success', `Purged ${cleanedCount} expired audit log entries`);
+
+      res.json({ message: `Successfully cleaned ${cleanedCount} expired audit log entries`, count: cleanedCount });
+    } catch (err: any) {
+      console.error('Error cleaning audit logs:', err);
+      res.status(500).json({ error: 'Failed to purge expired audit logs' });
     }
   });
 
@@ -4449,6 +4654,25 @@ ${reps}    </AdaptationSet>
         serverSettings.lastDetectedPublicIp = detected;
         saveServerSettings();
       }
+
+      // Clean expired audit logs on boot and setup daily schedule
+      try {
+        const cleaned = await db.cleanupAuditLogs();
+        if (cleaned > 0) {
+          console.log(`[Boot Init] Cleaned ${cleaned} expired audit log entries.`);
+        }
+      } catch (e) {
+        console.error('[Boot Init] Audit log cleanup check failed:', e);
+      }
+
+      setInterval(async () => {
+        try {
+          await db.cleanupAuditLogs();
+        } catch (e) {
+          console.error('[Scheduler] Scheduled audit log cleanup failed:', e);
+        }
+      }, 24 * 60 * 60 * 1000);
+
     } catch (err) {
       console.error('[Boot Init] Initialization check error:', err);
     }
