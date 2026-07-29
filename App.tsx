@@ -68,6 +68,7 @@ import { AdminProfile } from './components/AdminProfile';
 import { UserProfile } from './components/UserProfile';
 import { AuditLogs } from './components/AuditLogs';
 import { BackupRecovery } from './components/BackupRecovery';
+import { RaspberryPlayer } from './components/RaspberryPlayer';
 import { StreamSession, StreamStats, ChatMessage } from './types';
 
 export type IPMode = 'auto' | 'lan' | 'loopback' | 'manual';
@@ -3109,7 +3110,7 @@ CREATE TABLE IF NOT EXISTS streams (
           )}
 
           {activeTab === 'devices' && currentUser?.role === 'admin' && (
-            <DeviceManager token={token} streams={streams} networkDetails={networkDetails} />
+            <RaspberryPlayer token={token} streams={streams} networkDetails={networkDetails} />
           )}
 
           {activeTab === 'settings' && currentUser?.role === 'admin' && (

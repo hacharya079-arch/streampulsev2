@@ -11,6 +11,7 @@ import { exec, execSync, spawn } from 'child_process';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './server/db.ts';
 import { backupSystem } from './server/backupSystem.ts';
+import { rpiPlayerSystem } from './server/rpiPlayerSystem.ts';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 
@@ -4342,6 +4343,129 @@ ${reps}    </AdaptationSet>
       console.error(err);
       res.status(500).json({ error: 'Failed to delete schedule' });
     }
+  });
+
+  // ----------------------------------------------------
+  // RASPBERRY PI STREAMING PLAYER ENDPOINTS
+  // ----------------------------------------------------
+
+  // Standalone Fullscreen Kiosk Player UI
+  app.get('/rpi-kiosk', async (req: any, res: any) => {
+    try {
+      const streamKey = String(req.query.streamKey || rpiPlayerSystem.getConfig().defaultStreamKey || 'live_stream');
+      const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
+      const isHttps = req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https' || req.secure;
+      const protoHost = `${isHttps ? 'https' : 'http'}://${host}`;
+      const html = rpiPlayerSystem.renderKioskHtml(streamKey, protoHost);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (err: any) {
+      res.status(500).send('Error rendering RPi Player Kiosk: ' + err.message);
+    }
+  });
+
+  // Get RPi Player Configuration
+  app.get('/api/rpi-player/config', authenticateToken, async (req: any, res: any) => {
+    res.json(rpiPlayerSystem.getConfig());
+  });
+
+  // Update RPi Player Configuration
+  app.post('/api/rpi-player/config', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const updated = rpiPlayerSystem.saveConfig(req.body);
+      await logAudit(req, 'RPi Player Config Updated', 'Settings', 'success', 'Updated Raspberry Pi Player global configuration');
+      res.json({ success: true, config: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update RPi player config: ' + err.message });
+    }
+  });
+
+  // Telemetry Heartbeat from RPi Players
+  app.post('/api/rpi-player/status', async (req: any, res: any) => {
+    try {
+      const { streamKey, online_status, current_resolution, fps, bitrate, engine, player_version, mac_address, ip_address } = req.body;
+      const ip = ip_address || req.ip || '127.0.0.1';
+
+      const devices = await db.getDevices();
+      let device = devices.find(d => (mac_address && d.mac_address === mac_address) || d.ip_address === ip);
+
+      if (!device) {
+        device = await db.createDevice({
+          name: `Raspberry Pi Player (${ip})`,
+          os_version: 'Raspberry Pi OS 64-bit',
+          player_version: player_version || '1.2.4-rpi',
+          ip_address: ip,
+          mac_address: mac_address || undefined,
+          online_status: online_status || 'online',
+          current_resolution: current_resolution || '1080p',
+          current_volume: 100,
+          paired: true,
+          cpu_usage: 14,
+          ram_usage: 28,
+          temperature: 44,
+          network_speed: bitrate ? `${(bitrate / 1000).toFixed(1)} Mbps` : '4.5 Mbps'
+        });
+      } else {
+        await db.updateDevice(device.id, {
+          online_status: online_status || 'online',
+          current_resolution: current_resolution || device.current_resolution,
+          player_version: player_version || device.player_version,
+          network_speed: bitrate ? `${(bitrate / 1000).toFixed(1)} Mbps` : device.network_speed,
+          last_seen: new Date().toISOString()
+        });
+      }
+
+      broadcastToDashboards({
+        type: 'rpi_player_telemetry',
+        streamKey,
+        deviceId: device.id,
+        status: { online_status, current_resolution, fps, bitrate, engine, ip }
+      });
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to record telemetry: ' + err.message });
+    }
+  });
+
+  // Installation & Deployment Scripts
+  app.get('/api/rpi-player/script/setup', async (req: any, res: any) => {
+    const host = (req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000').toString();
+    const isHttps = req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https' || req.secure;
+    const protoHost = `${isHttps ? 'https' : 'http'}://${host}`;
+    const key = (req.query.streamKey || rpiPlayerSystem.getConfig().defaultStreamKey || 'live_stream').toString();
+    const script = rpiPlayerSystem.generateSetupScript(protoHost, key);
+    res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="setup-rpi-player.sh"');
+    res.send(script);
+  });
+
+  app.get('/api/rpi-player/script/systemd', async (req: any, res: any) => {
+    const service = rpiPlayerSystem.generateSystemdService();
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="streampulse-rpi-player.service"');
+    res.send(service);
+  });
+
+  app.get('/api/rpi-player/script/autostart', async (req: any, res: any) => {
+    const host = (req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000').toString();
+    const isHttps = req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https' || req.secure;
+    const protoHost = `${isHttps ? 'https' : 'http'}://${host}`;
+    const key = (req.query.streamKey || rpiPlayerSystem.getConfig().defaultStreamKey || 'live_stream').toString();
+    const script = rpiPlayerSystem.generateAutoStartScript(protoHost, key);
+    res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="streampulse-kiosk.sh"');
+    res.send(script);
+  });
+
+  app.get('/api/rpi-player/script/autoupdate', async (req: any, res: any) => {
+    const host = (req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000').toString();
+    const isHttps = req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https' || req.secure;
+    const protoHost = `${isHttps ? 'https' : 'http'}://${host}`;
+    const script = rpiPlayerSystem.generateAutoUpdateScript(protoHost);
+    res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="rpi-player-update.sh"');
+    res.send(script);
   });
 
   // ----------------------------------------------------
