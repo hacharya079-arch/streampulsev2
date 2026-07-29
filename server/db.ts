@@ -1921,6 +1921,189 @@ export const db = {
     }
   },
 
+  dumpAllData: async (): Promise<any> => {
+    if (usePostgres && pgPool) {
+      const usersRes = await pgPool.query('SELECT * FROM users ORDER BY id ASC');
+      const streamsRes = await pgPool.query('SELECT * FROM streams ORDER BY id ASC');
+      const devicesRes = await pgPool.query('SELECT * FROM devices ORDER BY id ASC');
+      const groupsRes = await pgPool.query('SELECT * FROM device_groups ORDER BY id ASC');
+      const membersRes = await pgPool.query('SELECT * FROM device_group_members');
+      const historyRes = await pgPool.query('SELECT * FROM playback_history ORDER BY timestamp DESC LIMIT 5000');
+      const logsRes = await pgPool.query('SELECT * FROM device_logs ORDER BY timestamp DESC LIMIT 5000');
+      const schedulesRes = await pgPool.query('SELECT * FROM device_schedules ORDER BY id ASC');
+      const auditRes = await pgPool.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 10000');
+      const settingsRes = await pgPool.query('SELECT * FROM app_settings');
+
+      const appSettings: Record<string, string> = {};
+      settingsRes.rows.forEach(r => { appSettings[r.key] = r.value; });
+
+      return {
+        users: usersRes.rows,
+        streams: streamsRes.rows,
+        devices: devicesRes.rows,
+        deviceGroups: groupsRes.rows,
+        deviceGroupMembers: membersRes.rows,
+        playbackHistory: historyRes.rows,
+        deviceLogs: logsRes.rows,
+        deviceSchedules: schedulesRes.rows,
+        auditLogs: auditRes.rows,
+        appSettings
+      };
+    } else {
+      return {
+        users: localState.users || [],
+        streams: localState.streams || [],
+        devices: localState.devices || [],
+        deviceGroups: localState.deviceGroups || [],
+        deviceGroupMembers: localState.deviceGroupMembers || [],
+        playbackHistory: localState.playbackHistory || [],
+        deviceLogs: localState.deviceLogs || [],
+        deviceSchedules: localState.deviceSchedules || [],
+        auditLogs: localState.auditLogs || [],
+        appSettings: localState.appSettings || {}
+      };
+    }
+  },
+
+  restoreAllData: async (data: any): Promise<void> => {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid backup data payload provided');
+    }
+
+    if (usePostgres && pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Clean tables
+        await client.query('TRUNCATE TABLE audit_logs, device_logs, playback_history, device_schedules, device_group_members, device_groups, devices, streams, app_settings, users RESTART IDENTITY CASCADE');
+
+        // 1. Users
+        if (Array.isArray(data.users)) {
+          for (const u of data.users) {
+            await client.query(
+              `INSERT INTO users (id, username, password_hash, role, created_at, status, assigned_stream_id, login_history, display_name)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [u.id, u.username, u.password_hash || u.passwordHash, u.role || 'user', u.created_at || u.createdAt || new Date(), u.status || 'enabled', u.assigned_stream_id || u.assignedStreamId || null, u.login_history || u.loginHistory || null, u.display_name || u.displayName || u.username]
+            );
+          }
+          await client.query(`SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users))`).catch(() => {});
+        }
+
+        // 2. Streams
+        if (Array.isArray(data.streams)) {
+          for (const s of data.streams) {
+            await client.query(
+              `INSERT INTO streams (id, user_id, title, broadcaster, stream_key, status, scheduled_start, rtmp_url, resolution, bitrate, codec, ingest_ip, viewers, start_time, width, height, fps, aspect_ratio, video_codec, audio_codec, preset, profile, pixel_format, enabled_profiles, gop_size, buffer_size, max_bitrate, scaling_algorithm, audio_enabled, audio_bitrate, audio_sample_rate, audio_channels, audio_volume, audio_normalize, audio_noise_reduction, audio_delay, audio_language, audio_track_selection, audio_passthrough, audio_transcoding, profiles_json)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41)`,
+              [s.id, s.user_id || s.userId || 1, s.title, s.broadcaster, s.stream_key || s.streamKey, s.status || 'offline', s.scheduled_start || s.scheduledStart || null, s.rtmp_url || s.rtmpUrl, s.resolution || '1080p', s.bitrate || 6000, s.codec || 'H.264', s.ingest_ip || s.ingestIp || '127.0.0.1', s.viewers || 0, s.start_time || s.startTime || null, s.width, s.height, s.fps, s.aspect_ratio || s.aspectRatio, s.video_codec || s.videoCodec, s.audio_codec || s.audioCodec, s.preset, s.profile, s.pixel_format || s.pixelFormat, s.enabled_profiles || s.enabledProfiles, s.gop_size || s.gopSize, s.buffer_size || s.bufferSize, s.max_bitrate || s.maxBitrate, s.scaling_algorithm || s.scalingAlgorithm, s.audio_enabled !== undefined ? s.audio_enabled : (s.audioEnabled !== undefined ? s.audioEnabled : true), s.audio_bitrate || s.audioBitrate, s.audio_sample_rate || s.audioSampleRate, s.audio_channels || s.audioChannels, s.audio_volume !== undefined ? s.audio_volume : (s.audioVolume !== undefined ? s.audioVolume : 100), s.audio_normalize !== undefined ? s.audio_normalize : (s.audioNormalize !== undefined ? s.audioNormalize : false), s.audio_noise_reduction !== undefined ? s.audio_noise_reduction : (s.audioNoiseReduction !== undefined ? s.audioNoiseReduction : false), s.audio_delay || s.audioDelay, s.audio_language || s.audioLanguage, s.audio_track_selection || s.audioTrackSelection, s.audio_passthrough !== undefined ? s.audio_passthrough : (s.audioPassthrough !== undefined ? s.audioPassthrough : false), s.audio_transcoding !== undefined ? s.audio_transcoding : (s.audioTranscoding !== undefined ? s.audioTranscoding : true), s.profiles_json || s.profilesJson]
+            );
+          }
+        }
+
+        // 3. Devices
+        if (Array.isArray(data.devices)) {
+          for (const d of data.devices) {
+            await client.query(
+              `INSERT INTO devices (id, name, location, description, os_version, player_version, ip_address, mac_address, last_seen, online_status, current_stream_id, current_stream_url, current_resolution, current_volume, current_playback_status, pairing_code, paired, token, cpu_usage, ram_usage, temperature, network_speed, screenshot_url, screenshot_time, brightness, rotation, player_settings, network_settings, client_version)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
+              [d.id, d.name, d.location, d.description, d.os_version, d.player_version, d.ip_address, d.mac_address, d.last_seen, d.online_status || 'offline', d.current_stream_id, d.current_stream_url, d.current_resolution, d.current_volume || 100, d.current_playback_status, d.pairing_code, d.paired || false, d.token, d.cpu_usage, d.ram_usage, d.temperature, d.network_speed, d.screenshot_url, d.screenshot_time, d.brightness || 100, d.rotation || '0', d.player_settings, d.network_settings, d.client_version]
+            );
+          }
+        }
+
+        // 4. Device Groups
+        if (Array.isArray(data.deviceGroups)) {
+          for (const g of data.deviceGroups) {
+            await client.query(
+              `INSERT INTO device_groups (id, name, description) VALUES ($1, $2, $3)`,
+              [g.id, g.name, g.description]
+            );
+          }
+        }
+
+        // 5. Device Group Members
+        if (Array.isArray(data.deviceGroupMembers)) {
+          for (const m of data.deviceGroupMembers) {
+            await client.query(
+              `INSERT INTO device_group_members (group_id, device_id) VALUES ($1, $2)`,
+              [m.group_id, m.device_id]
+            );
+          }
+        }
+
+        // 6. Playback History
+        if (Array.isArray(data.playbackHistory)) {
+          for (const ph of data.playbackHistory) {
+            await client.query(
+              `INSERT INTO playback_history (id, device_id, stream_id, stream_url, action, timestamp) VALUES ($1, $2, $3, $4, $5, $6)`,
+              [ph.id, ph.device_id, ph.stream_id, ph.stream_url, ph.action, ph.timestamp]
+            );
+          }
+        }
+
+        // 7. Device Logs
+        if (Array.isArray(data.deviceLogs)) {
+          for (const dl of data.deviceLogs) {
+            await client.query(
+              `INSERT INTO device_logs (id, device_id, level, message, timestamp) VALUES ($1, $2, $3, $4, $5)`,
+              [dl.id, dl.device_id, dl.level, dl.message, dl.timestamp]
+            );
+          }
+        }
+
+        // 8. Device Schedules
+        if (Array.isArray(data.deviceSchedules)) {
+          for (const ds of data.deviceSchedules) {
+            await client.query(
+              `INSERT INTO device_schedules (id, device_id, group_id, time, action, stream_id, stream_url, enabled) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              [ds.id, ds.device_id, ds.group_id, ds.time, ds.action, ds.stream_id, ds.stream_url, ds.enabled]
+            );
+          }
+        }
+
+        // 9. Audit Logs
+        if (Array.isArray(data.auditLogs)) {
+          for (const al of data.auditLogs) {
+            await client.query(
+              `INSERT INTO audit_logs (id, timestamp, username, user_role, action, module, ip_address, user_agent, result, details) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [al.id, new Date(al.timestamp), al.username, al.user_role, al.action, al.module, al.ip_address, al.user_agent, al.result, al.details]
+            );
+          }
+        }
+
+        // 10. App Settings
+        if (data.appSettings && typeof data.appSettings === 'object') {
+          for (const [key, val] of Object.entries(data.appSettings)) {
+            await client.query(
+              `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+              [key, String(val)]
+            );
+          }
+        }
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      localState.users = Array.isArray(data.users) ? data.users : [];
+      localState.streams = Array.isArray(data.streams) ? data.streams : [];
+      localState.devices = Array.isArray(data.devices) ? data.devices : [];
+      localState.deviceGroups = Array.isArray(data.deviceGroups) ? data.deviceGroups : [];
+      localState.deviceGroupMembers = Array.isArray(data.deviceGroupMembers) ? data.deviceGroupMembers : [];
+      localState.playbackHistory = Array.isArray(data.playbackHistory) ? data.playbackHistory : [];
+      localState.deviceLogs = Array.isArray(data.deviceLogs) ? data.deviceLogs : [];
+      localState.deviceSchedules = Array.isArray(data.deviceSchedules) ? data.deviceSchedules : [];
+      localState.auditLogs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
+      localState.appSettings = data.appSettings && typeof data.appSettings === 'object' ? data.appSettings : {};
+      saveLocalState();
+    }
+  },
+
   close: async (): Promise<void> => {
     if (pgPool) {
       console.log('Closing PostgreSQL database connection pool gracefully...');

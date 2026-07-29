@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import { exec, execSync, spawn } from 'child_process';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './server/db.ts';
+import { backupSystem } from './server/backupSystem.ts';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 
@@ -2513,43 +2514,172 @@ ${reps}    </AdaptationSet>
     });
   });
 
-  // Backups & Export/Import
-  app.post('/api/backup/db', authenticateToken, requireAdmin, async (req: any, res) => {
+  // ----------------------------------------------------
+  // PRODUCTION DISASTER RECOVERY & BACKUP SYSTEM APIS
+  // ----------------------------------------------------
+  app.get('/api/admin/backups', authenticateToken, requireAdmin, async (req: any, res: any) => {
     try {
-      const backupPath = path.resolve(`./data/backup_db_${Date.now()}.json`);
-      const allUsers = await db.getUsers();
-      const dump = { users: allUsers, timestamp: new Date().toISOString() };
-      
-      if (fs.existsSync('./data/db.json')) {
-        fs.copyFileSync('./data/db.json', backupPath);
-      } else {
-        fs.writeFileSync(backupPath, JSON.stringify(dump, null, 2));
-      }
-      await logAudit(req, 'Backup Created', 'System', 'success', `Database backup created: ${path.basename(backupPath)}`);
-      res.json({ success: true, message: 'Database backup compiled successfully.', file: path.basename(backupPath) });
+      const items = await backupSystem.listBackups();
+      const config = await backupSystem.getScheduleConfig();
+      const totalBytes = items.reduce((acc, curr) => acc + curr.size, 0);
+
+      res.json({
+        backups: items,
+        schedule: config,
+        totalBytes,
+        totalBackups: items.length
+      });
     } catch (err: any) {
-      await logAudit(req, 'Backup Created', 'System', 'failed', 'Backup error: ' + err.message);
-      res.status(500).json({ error: 'Database backup failed: ' + err.message });
+      console.error('Error fetching backups:', err);
+      res.status(500).json({ error: 'Failed to retrieve backups list: ' + err.message });
     }
   });
 
-  app.post('/api/backup/restore', authenticateToken, requireAdmin, async (req: any, res) => {
+  app.post('/api/admin/backup/now', authenticateToken, requireAdmin, async (req: any, res: any) => {
     try {
-      const files = fs.readdirSync('./data').filter(f => f.startsWith('backup_db_') && f.endsWith('.json'));
-      if (files.length === 0) {
-        await logAudit(req, 'Restore Completed', 'System', 'failed', 'No backup files found');
-        return res.status(400).json({ error: 'No database backup files found to restore.' });
-      }
-      files.sort().reverse();
-      const latest = path.join('./data', files[0]);
-      if (fs.existsSync('./data/db.json')) {
-        fs.copyFileSync(latest, './data/db.json');
-      }
-      await logAudit(req, 'Restore Completed', 'System', 'success', `Database restored from backup: ${files[0]}`);
-      res.json({ success: true, message: `Database successfully restored from backup: ${files[0]}` });
+      const username = req.user?.username || 'admin';
+      const backup = await backupSystem.createBackup('manual', username, serverSettings, serverSettings.ssl || {});
+      await logAudit(req, 'Manual Backup Created', 'System', 'success', `Created backup archive ${backup.filename} (${backup.size_formatted}, SHA256: ${backup.sha256.substring(0, 8)}...)`);
+
+      res.json({
+        success: true,
+        message: `Backup '${backup.filename}' created successfully.`,
+        backup
+      });
     } catch (err: any) {
-      await logAudit(req, 'Restore Completed', 'System', 'failed', 'Restore failed: ' + err.message);
-      res.status(500).json({ error: 'Database restore failed: ' + err.message });
+      console.error('Error creating manual backup:', err);
+      await logAudit(req, 'Manual Backup Created', 'System', 'failed', 'Backup creation error: ' + err.message);
+      res.status(500).json({ error: 'Failed to create backup: ' + err.message });
+    }
+  });
+
+  app.post('/api/admin/backup/scheduled-now', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const username = req.user?.username || 'admin';
+      const backup = await backupSystem.createBackup('scheduled', username, serverSettings, serverSettings.ssl || {});
+      await logAudit(req, 'Scheduled Backup Triggered', 'System', 'success', `Manually triggered scheduled backup ${backup.filename}`);
+
+      res.json({
+        success: true,
+        message: `Scheduled backup '${backup.filename}' completed successfully.`,
+        backup
+      });
+    } catch (err: any) {
+      await logAudit(req, 'Scheduled Backup Triggered', 'System', 'failed', 'Scheduled backup error: ' + err.message);
+      res.status(500).json({ error: 'Failed to run scheduled backup: ' + err.message });
+    }
+  });
+
+  app.post('/api/admin/backup/verify/:filename', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { filename } = req.params;
+      const result = await backupSystem.verifyBackup(filename);
+      await logAudit(req, 'Backup Verification', 'System', result.valid ? 'success' : 'failed', `Verified ${filename}: ${result.details}`);
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ valid: false, details: 'Verification failed: ' + err.message });
+    }
+  });
+
+  app.post('/api/admin/backup/restore', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { filename } = req.body;
+      if (!filename) {
+        return res.status(400).json({ error: 'Filename is required for restore operation' });
+      }
+
+      const username = req.user?.username || 'admin';
+      console.log(`[Disaster Recovery] Initiating restore from ${filename} triggered by ${username}...`);
+
+      const result = await backupSystem.restoreBackup(filename, username, serverSettings, serverSettings.ssl || {});
+
+      await logAudit(req, 'Disaster Recovery Restore', 'System', 'success', `System restored from backup archive '${filename}'. Safety backup '${result.safetyBackupFilename}' created.`);
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('Error during disaster recovery restore:', err);
+      await logAudit(req, 'Disaster Recovery Restore', 'System', 'failed', `Restore failed for ${req.body?.filename}: ` + err.message);
+      res.status(500).json({ error: 'Disaster recovery restore failed: ' + err.message });
+    }
+  });
+
+  app.delete('/api/admin/backup/:filename', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { filename } = req.params;
+      const deleted = await backupSystem.deleteBackup(filename);
+      if (!deleted) {
+        return res.status(404).json({ error: 'Backup archive not found' });
+      }
+
+      await logAudit(req, 'Backup Deleted', 'System', 'success', `Deleted backup archive ${filename}`);
+      res.json({ success: true, message: `Backup archive '${filename}' deleted successfully.` });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to delete backup archive: ' + err.message });
+    }
+  });
+
+  app.get('/api/admin/backup/download/:filename', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { filename } = req.params;
+      const safeFilename = path.basename(filename);
+      const filePath = path.join(backupSystem.getBackupDir(), safeFilename);
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Backup archive file not found' });
+      }
+
+      await logAudit(req, 'Backup Downloaded', 'System', 'success', `Downloaded backup archive ${safeFilename}`);
+
+      res.setHeader('Content-Type', 'application/x-gzip');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+      const fileStream = fs.createReadStream(filePath);
+      fileStream.pipe(res);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to download backup archive: ' + err.message });
+    }
+  });
+
+  app.post('/api/admin/backup/upload', authenticateToken, requireAdmin, express.raw({ type: '*/*', limit: '250mb' }), async (req: any, res: any) => {
+    try {
+      const filename = req.headers['x-filename'] || `uploaded_backup_${Date.now()}.tar.gz`;
+      const buffer = req.body;
+
+      if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+        return res.status(400).json({ error: 'No archive binary content received' });
+      }
+
+      const result = await backupSystem.saveUploadedBackup(buffer, String(filename));
+
+      await logAudit(req, 'Backup Uploaded', 'System', 'success', `Uploaded backup archive ${result.backup.filename} (${result.backup.size_formatted})`);
+
+      res.json({
+        success: true,
+        message: `Backup archive '${result.backup.filename}' uploaded and verified successfully.`,
+        backup: result.backup,
+        verification: result.verification
+      });
+    } catch (err: any) {
+      console.error('Error uploading backup:', err);
+      await logAudit(req, 'Backup Uploaded', 'System', 'failed', 'Upload error: ' + err.message);
+      res.status(500).json({ error: 'Failed to process uploaded backup archive: ' + err.message });
+    }
+  });
+
+  app.put('/api/admin/backup/settings', authenticateToken, requireAdmin, async (req: any, res: any) => {
+    try {
+      const { frequency, retentionCount } = req.body;
+      const updated = await backupSystem.saveScheduleConfig(frequency, Number(retentionCount));
+
+      await logAudit(req, 'Backup Schedule Updated', 'Settings', 'success', `Backup schedule set to ${frequency}, retention limit ${retentionCount}`);
+
+      res.json({
+        success: true,
+        message: 'Backup schedule and retention policy updated successfully',
+        schedule: updated
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update backup schedule settings: ' + err.message });
     }
   });
 
@@ -4665,6 +4795,13 @@ ${reps}    </AdaptationSet>
         console.error('[Boot Init] Audit log cleanup check failed:', e);
       }
 
+      // Check scheduled backups on boot and setup 15-min interval
+      try {
+        await backupSystem.checkAndRunSchedule(serverSettings, serverSettings.ssl || {});
+      } catch (e) {
+        console.error('[Boot Init] Initial backup schedule check failed:', e);
+      }
+
       setInterval(async () => {
         try {
           await db.cleanupAuditLogs();
@@ -4672,6 +4809,14 @@ ${reps}    </AdaptationSet>
           console.error('[Scheduler] Scheduled audit log cleanup failed:', e);
         }
       }, 24 * 60 * 60 * 1000);
+
+      setInterval(async () => {
+        try {
+          await backupSystem.checkAndRunSchedule(serverSettings, serverSettings.ssl || {});
+        } catch (e) {
+          console.error('[Scheduler] Backup schedule runner error:', e);
+        }
+      }, 15 * 60 * 1000);
 
     } catch (err) {
       console.error('[Boot Init] Initialization check error:', err);
