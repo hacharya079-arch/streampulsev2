@@ -981,8 +981,9 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
   const hlsInstanceRef = useRef<any>(null);
   const dashPlayerRef = useRef<any>(null);
 
-  // Reset isPlaying to false initially to prevent browser autoplay blocks
-  const [isPlaying, setIsPlaying] = useState(false);
+  // Track active playback mode and controlled reconnect UI state
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [isReconnectingUI, setIsReconnectingUI] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
@@ -1132,9 +1133,11 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     if (stream.status === 'live') {
       console.log(`[StreamPlayer Engine] Stream "${stream.title}" status is LIVE. Activating player playback engine...`);
       setIsPlaying(true);
+      setIsReconnectingUI(false);
     } else {
       console.log(`[StreamPlayer Engine] Stream "${stream.title}" status is ${stream.status ? stream.status.toUpperCase() : 'OFFLINE'}. Flushing video buffers and stopping player...`);
       setIsPlaying(false);
+      setIsReconnectingUI(false);
       isRecoveringRef.current = false;
       // Immediate stream loss cleanup: stop video, flush buffer, destroy player instance
       if (hlsInstanceRef.current) {
@@ -1270,6 +1273,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               console.log(`[HLS Engine] Manifest parsed successfully (${data.levels ? data.levels.length : 0} quality levels).`);
               nonFatalErrorCount = 0;
               isRecoveringRef.current = false;
+              setIsReconnectingUI(false);
               hls.currentLevel = -1;
 
               if (isMobile && data.levels && data.levels.length > 1) {
@@ -1311,6 +1315,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             const triggerAutoRecovery = () => {
               if (!active || isRecoveringRef.current) return;
               isRecoveringRef.current = true;
+              setIsReconnectingUI(true);
               console.log('[HLS Recovery Engine] HLS stream interrupted or offline. Clearing video buffers and starting recovery poll...');
 
               if (hlsInstanceRef.current) {
@@ -1331,6 +1336,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 if (!active) {
                   if (recoveryTimer) clearInterval(recoveryTimer);
                   isRecoveringRef.current = false;
+                  setIsReconnectingUI(false);
                   return;
                 }
                 try {
@@ -1342,6 +1348,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                       console.log('[HLS Recovery Engine] Stream playlist detected LIVE! Re-attaching player and recovering playback automatically...');
                       if (recoveryTimer) clearInterval(recoveryTimer);
                       isRecoveringRef.current = false;
+                      setIsReconnectingUI(false);
                       initPlayer();
                     }
                   }
@@ -1728,16 +1735,28 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
         {/* Persistent Video Element so videoRef is retained for clean buffer flush on stream stop */}
         <video 
           ref={videoRef}
-          className={`w-full h-full object-contain ${stream.status === 'live' && isPlaying ? 'block' : 'hidden'}`}
+          className={`w-full h-full object-contain ${(stream.status === 'live' || isPlaying || isReconnectingUI) ? 'block' : 'hidden'}`}
           playsInline
           autoPlay
           controls={false}
         />
 
-        {stream.status === 'live' ? (
+        {(stream.status === 'live' || isReconnectingUI) ? (
           <div className="relative w-full h-full overflow-hidden">
             {isPlaying ? (
               <div className="relative w-full h-full bg-black group/player select-none">
+                {/* Reconnecting Overlay */}
+                {isReconnectingUI && (
+                  <div className="absolute inset-0 bg-black/85 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-4 z-40">
+                    <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wider mb-3 shadow-lg shadow-amber-950/50">
+                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                      Reconnecting to Stream...
+                    </div>
+                    <p className="text-xs text-zinc-400 max-w-xs leading-relaxed">
+                      Stream is momentarily offline. Reconnection is scheduled automatically.
+                    </p>
+                  </div>
+                )}
                 {/* Always-accessible top-right fullscreen button */}
                 <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/player:opacity-100 transition-opacity duration-300">
                   <button
