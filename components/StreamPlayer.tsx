@@ -983,8 +983,20 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
   // Track active playback mode and controlled reconnect UI state
   const [isPlaying, setIsPlaying] = useState(true);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [isReconnectingUI, setIsReconnectingUI] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const autoplayBlockedRef = useRef<boolean>(false);
+  useEffect(() => {
+    autoplayBlockedRef.current = autoplayBlocked;
+  }, [autoplayBlocked]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      console.log('[PLAYER] video mounted');
+    }
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -1160,27 +1172,51 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
     }
   }, [stream.status]);
 
-  // Ref to track whether recovery polling is active
+  // Ref to track whether recovery polling is active and track playback session generation
   const isRecoveringRef = useRef<boolean>(false);
+  const hasReceivedFirstFragmentRef = useRef<boolean>(false);
+  const playbackSessionIdRef = useRef<number>(0);
 
-  // Helper to safely execute play with muted fallback if browser blocks unmuted play (NEVER set volume state to 0)
-  const safePlayVideo = async (video: HTMLVideoElement) => {
-    if (!video) return;
+  // Helper to safely execute play with muted fallback if browser blocks unmuted play
+  const safePlayVideo = async (video: HTMLVideoElement): Promise<boolean> => {
+    if (!video) {
+      console.warn('[PLAYER] safePlayVideo called without video element ref');
+      return false;
+    }
     video.volume = volume / 100;
     video.muted = volume === 0;
 
+    console.log('[PLAYER] Initiating Promise-based play() call (unmuted)...');
     try {
       await video.play();
-      console.log('[StreamPlayer Engine] Playback started/resumed successfully.');
+      console.log('[PLAYER] Unmuted playback started successfully.');
+      setAutoplayBlocked(false);
+      return true;
     } catch (err: any) {
-      console.warn('[StreamPlayer Engine] Unmuted play blocked by browser policy, attempting muted play fallback while preserving user volume state:', err);
+      console.warn(`[PLAYER] Unmuted play blocked by browser policy (${err?.name || 'Error'}: ${err?.message || err}). Attempting muted fallback...`);
       try {
         video.muted = true;
         await video.play();
-        console.log('[StreamPlayer Engine] Fallback muted playback started successfully.');
-      } catch (mutedErr) {
-        console.error('[StreamPlayer Engine] Automatic playback start failed:', mutedErr);
+        console.log('[PLAYER] Fallback muted playback started successfully.');
+        setAutoplayBlocked(false);
+        return true;
+      } catch (mutedErr: any) {
+        console.warn('[PLAYER] autoplay blocked');
+        console.error(`[PLAYER] Autoplay blocked by browser policy (${mutedErr?.name || 'NotAllowedError'}). Exposing Play control for user interaction:`, mutedErr);
+        setAutoplayBlocked(true);
+        setIsPlaying(false);
+        return false;
       }
+    }
+  };
+
+  const handleUserPlayClick = async () => {
+    console.log('[PLAYER] User clicked Play control. Initiating playback from user gesture...');
+    setAutoplayBlocked(false);
+    setIsPlaying(true);
+    const video = videoRef.current;
+    if (video) {
+      await safePlayVideo(video);
     }
   };
 
@@ -1195,7 +1231,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       }
       video.load();
     } catch (e) {
-      console.warn('[StreamPlayer Engine] Video reset notice:', e);
+      console.warn('[PLAYER Engine] Video reset notice:', e);
     }
   };
 
@@ -1209,9 +1245,16 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
     const initPlayer = async () => {
       const video = videoRef.current;
-      if (!video) return;
+      if (!video) {
+        console.warn('[PLAYER] Video element ref is not available. Deferring HLS initialization.');
+        return;
+      }
 
-      console.log(`[StreamPlayer Engine] Initializing HLS player for stream "${stream.title}" (${hlsUrl})...`);
+      playbackSessionIdRef.current += 1;
+      const currentSessionId = playbackSessionIdRef.current;
+
+      console.log(`[PLAYER Engine Session ${currentSessionId}] Initializing HLS player for stream "${stream.title}" (${hlsUrl})...`);
+      hasReceivedFirstFragmentRef.current = false;
 
       // Clean up previous Hls instance & reset video element before re-attaching
       if (hlsInstanceRef.current) {
@@ -1235,7 +1278,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       if (playerProtocol === 'hls') {
         try {
           await loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js', 'hls-js-cdn');
-          if (!active) return;
+          if (!active || currentSessionId !== playbackSessionIdRef.current) return;
           const Hls = (window as any).Hls;
           if (Hls && Hls.isSupported()) {
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -1262,15 +1305,21 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               fragLoadingRetryDelay: 1000,
             });
 
-            const cacheBustUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
-            console.log(`[HLS Engine] Loading fresh manifest: ${cacheBustUrl}`);
-            hls.loadSource(cacheBustUrl);
             hls.attachMedia(video);
             hlsInstanceRef.current = hls;
 
+            hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              console.log('[PLAYER] media attached');
+              const cacheBustUrl = `${hlsUrl}${hlsUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+              console.log(`[PLAYER HLS Session ${currentSessionId}] Media attached. Loading fresh manifest: ${cacheBustUrl}`);
+              hls.loadSource(cacheBustUrl);
+            });
+
             hls.on(Hls.Events.MANIFEST_PARSED, (event: any, data: any) => {
-              if (!active) return;
-              console.log(`[HLS Engine] Manifest parsed successfully (${data.levels ? data.levels.length : 0} quality levels).`);
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              console.log('[PLAYER] manifest parsed');
+              console.log(`[PLAYER HLS Session ${currentSessionId}] Manifest parsed successfully (${data.levels ? data.levels.length : 0} quality levels).`);
               nonFatalErrorCount = 0;
               isRecoveringRef.current = false;
               setIsReconnectingUI(false);
@@ -1290,33 +1339,55 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               const uniqueLevels = Array.from(new Set(levels));
               setQualityLevels(['Auto', ...uniqueLevels]);
 
-              // Trigger initial playback request
+              // Trigger initial playback request with Promise handling
               safePlayVideo(video);
             });
 
             // Listen for first fragment buffered to resume playback once media frame is ready
             hls.on(Hls.Events.FRAG_BUFFERED, () => {
-              if (!active) return;
-              if (video.paused && stream.status === 'live') {
-                console.log('[HLS Engine] First fragment buffered. Triggering auto-play...');
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              hasReceivedFirstFragmentRef.current = true;
+              if (video.paused && stream.status === 'live' && !autoplayBlockedRef.current) {
+                console.log(`[PLAYER HLS Session ${currentSessionId}] First fragment buffered. Attempting auto-play...`);
                 safePlayVideo(video);
               }
             });
 
+            const handlePlayingState = () => {
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              console.log('[PLAYER] playback started');
+              setAutoplayBlocked(false);
+              setIsPlaying(true);
+            };
+
             const handleCanPlay = () => {
-              if (!active) return;
-              if (video.paused && stream.status === 'live') {
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              if (video.paused && stream.status === 'live' && !autoplayBlockedRef.current) {
+                console.log(`[PLAYER HLS Session ${currentSessionId}] Video element ready (canplay/loadeddata). Triggering safePlayVideo...`);
                 safePlayVideo(video);
               }
             };
             video.addEventListener('canplay', handleCanPlay);
             video.addEventListener('loadeddata', handleCanPlay);
+            video.addEventListener('playing', handlePlayingState);
+            video.addEventListener('timeupdate', () => {
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              if (video.currentTime > 0) {
+                handlePlayingState();
+              }
+            });
 
             const triggerAutoRecovery = () => {
               if (!active || isRecoveringRef.current) return;
               isRecoveringRef.current = true;
+              hasReceivedFirstFragmentRef.current = false;
               setIsReconnectingUI(true);
-              console.log('[HLS Recovery Engine] HLS stream interrupted or offline. Clearing video buffers and starting recovery poll...');
+
+              playbackSessionIdRef.current += 1;
+              const recoverySessionId = playbackSessionIdRef.current;
+
+              console.log('[PLAYER] reconnect');
+              console.log(`[PLAYER Recovery Session ${recoverySessionId}] OBS stream disconnected/stopped. Clearing video buffers and polling for stream start...`);
 
               if (hlsInstanceRef.current) {
                 try {
@@ -1333,10 +1404,8 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
               if (recoveryTimer) clearInterval(recoveryTimer);
 
               const checkAndResume = async () => {
-                if (!active) {
+                if (!active || recoverySessionId !== playbackSessionIdRef.current) {
                   if (recoveryTimer) clearInterval(recoveryTimer);
-                  isRecoveringRef.current = false;
-                  setIsReconnectingUI(false);
                   return;
                 }
                 try {
@@ -1345,7 +1414,8 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   if (res.ok) {
                     const text = await res.text();
                     if (text && text.includes('#EXTM3U')) {
-                      console.log('[HLS Recovery Engine] Stream playlist detected LIVE! Re-attaching player and recovering playback automatically...');
+                      if (!active || recoverySessionId !== playbackSessionIdRef.current) return;
+                      console.log(`[PLAYER Recovery Session ${recoverySessionId}] OBS stream playlist detected LIVE! Re-attaching player and recovering playback...`);
                       if (recoveryTimer) clearInterval(recoveryTimer);
                       isRecoveringRef.current = false;
                       setIsReconnectingUI(false);
@@ -1362,13 +1432,13 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             };
 
             hls.on(Hls.Events.ERROR, (event: any, data: any) => {
-              if (!active) return;
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
 
               if (data.fatal) {
-                console.warn(`[HLS Engine] Fatal error detected (${data.type}, ${data.details}). Triggering recovery flow...`);
+                console.warn(`[PLAYER HLS Session ${currentSessionId}] Fatal error detected (type: ${data.type}, details: ${data.details}). Triggering recovery flow...`);
                 switch (data.type) {
                   case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.warn('[HLS Engine] Media buffer error, attempting media recovery...');
+                    console.warn(`[PLAYER HLS Session ${currentSessionId}] Media buffer error, attempting media recovery...`);
                     try {
                       hls.recoverMediaError();
                     } catch (e) {
@@ -1384,7 +1454,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                   nonFatalErrorCount++;
                   if (nonFatalErrorCount > 6) {
-                    console.warn('[HLS Engine] Persistent non-fatal network errors detected, initiating stream recovery...');
+                    console.warn(`[PLAYER HLS Session ${currentSessionId}] Persistent non-fatal network errors detected, initiating stream recovery...`);
                     triggerAutoRecovery();
                   }
                 }
@@ -1393,8 +1463,8 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
 
             // Monitor video element stall/ended/error events
             const handleStallOrEnd = () => {
-              if (!active) return;
-              console.warn('[HLS Engine] Video element stalled or ended during live playback. Checking stream status and starting recovery...');
+              if (!active || currentSessionId !== playbackSessionIdRef.current) return;
+              console.warn(`[PLAYER HLS Session ${currentSessionId}] Video element stalled or ended during live playback. Triggering recovery...`);
               triggerAutoRecovery();
             };
 
@@ -1421,7 +1491,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             video.addEventListener('ended', handleNativeError);
           }
         } catch (err) {
-          console.error('[HLS Engine] HLS load error:', err);
+          console.error('[PLAYER HLS] HLS load error:', err);
         }
       } else {
         // MPEG-DASH Playback using dash.js
@@ -1445,7 +1515,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
             });
           }
         } catch (err) {
-          console.error('[DASH Engine] DASH load error:', err);
+          console.error('[PLAYER DASH] DASH load error:', err);
         }
       }
     };
@@ -1470,7 +1540,7 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
         dashPlayerRef.current = null;
       }
     };
-  }, [isPlaying, playerProtocol, hlsUrl, dashUrl, stream.status]);
+  }, [isPlaying, playerProtocol, stream.id, stream.streamKey, stream.status]);
 
   // Proactive Playback Auto-Resume & Continuity Watchdog
   useEffect(() => {
@@ -1480,15 +1550,10 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
       const video = videoRef.current;
       if (!video) return;
 
-      // If stream is live and video is paused (and not currently recovering), auto-resume
-      if (stream.status === 'live' && video.paused && !isRecoveringRef.current) {
-        console.log('[Stream Watchdog] Stream is live but player paused, auto-resuming playback...');
-        safePlayVideo(video);
-      }
-
-      // If video has errored or unloaded during live status, recover
-      if (stream.status === 'live' && (video.error || video.readyState === 0) && !isRecoveringRef.current) {
-        console.warn('[Stream Watchdog] Video element in error/unloaded state during live stream, re-initializing player...');
+      // If video has errored or unloaded after playback had started, recover
+      const isUnloadedAfterStart = hasReceivedFirstFragmentRef.current && video.readyState === 0;
+      if (stream.status === 'live' && (video.error || isUnloadedAfterStart) && !isRecoveringRef.current) {
+        console.warn('[PLAYER Watchdog] Video element in error/unloaded state after playback start during live stream, re-initializing player...');
         if (hlsInstanceRef.current) {
           try {
             hlsInstanceRef.current.detachMedia();
@@ -1496,10 +1561,11 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
           } catch (_) {}
           hlsInstanceRef.current = null;
         }
+        hasReceivedFirstFragmentRef.current = false;
         resetVideoElement(video);
         isRecoveringRef.current = false;
       }
-    }, 1500);
+    }, 2500);
 
     return () => clearInterval(watchdogTimer);
   }, [isPlaying, stream.status, hlsUrl]);
@@ -1737,8 +1803,21 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
           ref={videoRef}
           className={`w-full h-full object-contain ${(stream.status === 'live' || isPlaying || isReconnectingUI) ? 'block' : 'hidden'}`}
           playsInline
+          preload="auto"
           autoPlay
+          muted={volume === 0}
           controls={false}
+          onPlaying={() => {
+            console.log('[PLAYER] playback started');
+            setAutoplayBlocked(false);
+            setIsPlaying(true);
+          }}
+          onTimeUpdate={(e) => {
+            if (e.currentTarget.currentTime > 0) {
+              setAutoplayBlocked(false);
+              setIsPlaying(true);
+            }
+          }}
         />
 
         {(stream.status === 'live' || isReconnectingUI) ? (
@@ -1866,9 +1945,15 @@ const StreamPlayer: React.FC<StreamPlayerProps> = ({
                   alt={stream.title} 
                   className="w-full h-full object-cover transition-all duration-700 opacity-60 scale-100"
                 />
-                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center p-4">
+                  {autoplayBlocked && (
+                    <div className="mb-3 px-3 py-1 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-[10px] font-semibold tracking-wide uppercase shadow-md flex items-center gap-1.5 animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                      Autoplay blocked by browser • Press Play to start
+                    </div>
+                  )}
                   <button 
-                    onClick={() => setIsPlaying(true)}
+                    onClick={handleUserPlayClick}
                     className="p-3.5 sm:p-4 bg-blue-600 hover:bg-blue-500 rounded-full text-white shadow-2xl transition-all duration-300 hover:scale-110 active:scale-95 group/playbtn border border-blue-400/20 cursor-pointer"
                     title="Start Playback"
                   >
