@@ -1,104 +1,119 @@
-# StreamPulse Full Installer for Raspberry Pi
+# StreamPulse Universal Master Installer for Raspberry Pi
 **Target:** Raspberry Pi OS 64-bit / Debian 13 (Trixie) ARM64 / Labwc Desktop  
-**Target User:** `himakara` (with automatic non-root fallback)
+**Compatibility:** Works on **Both Fresh / New Pis** and **Existing / Older Pis**  
+**User Detection:** Automatic Desktop Login User Detection (`himakara`, `pi`, `operator`, `admin`, etc.)
 
 ---
 
-## Overview
-
-The StreamPulse Full Installer provisions a brand-new or existing Raspberry Pi into a production-grade live streaming & kiosk display node.
-
-It configures all 10 essential capabilities in a single, idempotent pass:
-1. **StreamPulse Logo Player** (offline Motion Logo MP4 loop & fallback)
-2. **StreamPulse Streaming Player** (HLS hardware-accelerated playback)
-3. **Dashboard Web Interface** (responsive telemetry & controls)
-4. **Fullscreen / Kiosk Mode** (dedicated browser profile, no desktop chrome)
-5. **Automatic Boot Startup** (systemd supervised service)
-6. **Zero Keyring / Password Popups** (`--password-store=basic` argument)
-7. **Reboot Persistence & Recovery** (process watchdog & crash recovery)
-8. **Backup & Restore Engine** (timestamped snapshots in `~/streampulse-backups/`)
-9. **Comprehensive Diagnostics** (`/opt/streampulse/bin/diagnose.sh`)
-10. **Automated 10-Point Validation** (`/opt/streampulse/bin/validate.sh`)
-
----
-
-## 1-Command Installation
-
-Run on the Raspberry Pi:
-
-```bash
-curl -fsSL "http://187.127.210.81/api/rpi-player/script/full-install?streamKey=live_stream&dashboardUrl=http://187.127.210.81/" | sudo bash
-```
-
-Or clone/download this repository and run locally:
-
-```bash
-sudo bash full-install.sh --stream-key "YOUR_STREAM_KEY" --dashboard-url "http://187.127.210.81/"
-```
-
----
-
-## Command-Line Options
+## Architecture Overview
 
 ```text
-Usage:
-  sudo bash full-install.sh [OPTIONS]
-
-Options:
-  -k, --stream-key KEY        Stream key for StreamPulse Player (default: "live_stream")
-  -u, --dashboard-url URL     Target URL for Fullscreen Kiosk (default: "http://187.127.210.81/")
-  -s, --server-url URL        StreamPulse backend server URL (default: inferred from dashboard URL)
-  -U, --user USERNAME         Linux non-root user (default: "himakara" or current user)
-  --no-validate               Skip running post-installation validation tests
-  -h, --help                  Show help message and exit
+ONE RASPBERRY PI
+  ├── COMMON LOGO (/opt/streampulse/logo/)
+  │   ├── motion-logo.mp4 (Offline loop)
+  │   └── logo-fallback.html (Local webview fallback)
+  ├── PI-SPECIFIC STREAM CHANNEL (/opt/streampulse/config/player.conf)
+  │   ├── Assigned Channel: channel1 / channel2 / etc.
+  │   └── Stream Key: Protected local storage (Masked in diagnostics)
+  ├── DASHBOARD FULLSCREEN KIOSK (/opt/streampulse/config/kiosk.conf)
+  │   ├── Dedicated profile: /opt/streampulse/chromium-profile
+  │   └── Keyring suppression: --password-store=basic (Inside Chromium args)
+  └── AUTHORITATIVE SYSTEMD SERVICE
+      └── streampulse-dashboard.service (Survives reboots, auto-recovers)
 ```
+
+---
+
+## 1-Command Universal Installation
+
+Run on the target Raspberry Pi terminal:
+
+```bash
+curl -fsSL "http://187.127.210.81/api/rpi-player/script/universal-install?channel=channel1&streamKey=live_stream&dashboardUrl=http://187.127.210.81/" | sudo bash
+```
+
+Or pass arguments directly:
+
+```bash
+curl -fsSL "http://187.127.210.81/api/rpi-player/script/universal-install" | sudo bash -s -- \
+  --channel "channel1" \
+  --stream-key "live_stream" \
+  --dashboard-url "http://187.127.210.81/"
+```
+
+---
+
+## Per-Pi Channel Assignment Examples
+
+- **Pi 1 (Main Hall):**
+  ```bash
+  curl -fsSL "http://187.127.210.81/api/rpi-player/script/universal-install?channel=channel1&streamKey=live_stream" | sudo bash
+  ```
+- **Pi 2 (Auditorium):**
+  ```bash
+  curl -fsSL "http://187.127.210.81/api/rpi-player/script/universal-install?channel=channel2&streamKey=auditorium_feed" | sudo bash
+  ```
+- **Pi 3 (Lobby):**
+  ```bash
+  curl -fsSL "http://187.127.210.81/api/rpi-player/script/universal-install?channel=channel3&streamKey=lobby_feed" | sudo bash
+  ```
 
 ---
 
 ## Project Structure
 
 ```text
-streampulse-full-installer/
-├── full-install.sh
-├── uninstall.sh
-├── restore.sh
-├── README.md
+streampulse-universal-installer/
+├── full-install.sh                      # Universal Master Installer
+├── uninstall.sh                         # Safe Uninstaller (Preserves Logo & Audio)
+├── restore.sh                           # Fast Snapshot Restorer
+├── README.md                            # Documentation
 ├── config/
-│   └── kiosk.conf
+│   ├── kiosk.conf                       # Kiosk & Browser Profile Settings
+│   └── player.conf                      # Per-Pi Assigned Channel & Stream Keys
 ├── systemd/
-│   └── streampulse-dashboard.service
+│   └── streampulse-dashboard.service    # Authoritative systemd Unit
 └── bin/
-    ├── dashboard-kiosk.sh
-    ├── backup.sh
-    ├── diagnose.sh
-    └── validate.sh
+    ├── dashboard-kiosk.sh               # Authoritative Kiosk Launcher
+    ├── backup.sh                        # Timestamped Backup Engine
+    ├── restore.sh                       # Restoration Tool
+    ├── diagnose.sh                      # Diagnostic Tool (Masks Stream Keys)
+    ├── validate.sh                      # 18-Point Verification Suite
+    └── set-channel.sh                   # Safe Per-Pi Channel Switcher
 ```
 
 ---
 
-## Management & Operations
+## Operations & Management
 
-### 1. Run Automated Validation Matrix
+### 1. Switch Channel on a Running Pi (No Rebuild Required)
+```bash
+sudo /opt/streampulse/bin/set-channel.sh channel2
+# Or with new stream key:
+sudo /opt/streampulse/bin/set-channel.sh channel3 new_stream_key
+```
+
+### 2. Run 18-Point Validation Matrix
 ```bash
 sudo /opt/streampulse/bin/validate.sh
 ```
 
-### 2. Run Comprehensive Diagnostics
+### 3. Run System Diagnostics (Safe Key Masking)
 ```bash
 sudo /opt/streampulse/bin/diagnose.sh
 ```
 
-### 3. Check Live Kiosk Logs
+### 4. Create a Manual Backup Snapshot
 ```bash
-sudo journalctl -u streampulse-dashboard.service -f
+sudo /opt/streampulse/bin/backup.sh
 ```
 
-### 4. Restore Pre-Installation Backup
+### 5. Restore From Latest Backup
 ```bash
 sudo /opt/streampulse/bin/restore.sh
 ```
 
-### 5. Safe Uninstallation
+### 6. View Live Kiosk Journal Logs
 ```bash
-sudo /opt/streampulse/bin/uninstall.sh
+sudo journalctl -u streampulse-dashboard.service -f
 ```
