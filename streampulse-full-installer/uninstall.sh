@@ -1,75 +1,53 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# StreamPulse Safe Uninstallation Engine
-# Managed by StreamPulse Universal Installer
-# Path: /opt/streampulse/uninstall.sh
+# StreamPulse Master Installer - Safe Uninstallation Script
+# Location: /opt/streampulse/bin/uninstall.sh or ./uninstall.sh
+# Removes master installer kiosk services safely without deleting media or player
 # ==============================================================================
 
 set -uo pipefail
 
-if [[ $EUID -ne 0 ]]; then
-  echo "Error: Uninstaller must be run with root privileges (sudo)." >&2
+if [ "$EUID" -ne 0 ]; then
+  echo "Error: Please run as root (e.g. sudo bash uninstall.sh)"
   exit 1
 fi
 
-echo "======================================================================"
-echo "          StreamPulse Safe Uninstallation"
-echo "======================================================================"
-echo "This will safely disable and remove StreamPulse Player services,"
-echo "authoritative scripts, and dedicated browser profiles."
-echo ""
-echo "SAFE PRESERVATION GUARANTEES:"
-echo "  [✓] Common Logo directory (/opt/streampulse/logo) is PRESERVED."
-echo "  [✓] Media assets and player recordings are PRESERVED."
-echo "  [✓] User personal files & home directory are PRESERVED."
-echo "  [✓] PipeWire & WirePlumber audio subsystems are PRESERVED."
-echo "  [✓] Remote desktop tools (RustDesk/VNC) are PRESERVED."
-echo "----------------------------------------------------------------------"
+TARGET_USER="${SUDO_USER:-$(whoami 2>/dev/null || echo "himakara")}"
+if [ "$TARGET_USER" = "root" ]; then
+  TARGET_USER="$(logname 2>/dev/null || id -un 1000 2>/dev/null || echo "himakara")"
+fi
+TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || echo "/home/$TARGET_USER")"
 
-# 1. Stop and disable playback services
-for srv in streampulse-player.service streampulse-dashboard.service streampulse-rpi-player.service streampulse-kiosk.service; do
-  if systemctl is-active --quiet "${srv}" 2>/dev/null; then
-    echo "  [+] Stopping ${srv}..."
-    systemctl stop "${srv}" 2>/dev/null || true
-  fi
-  if systemctl is-enabled --quiet "${srv}" 2>/dev/null; then
-    echo "  [+] Disabling ${srv}..."
-    systemctl disable "${srv}" 2>/dev/null || true
-  fi
-  rm -f "/etc/systemd/system/${srv}" 2>/dev/null || true
-done
+echo "========================================================================"
+echo "          StreamPulse Master Suite - Safe Uninstaller                   "
+echo "========================================================================"
 
+echo "[1/4] Stopping and disabling StreamPulse Dashboard Kiosk services..."
+systemctl stop streampulse-dashboard.service 2>/dev/null || true
+systemctl disable streampulse-dashboard.service 2>/dev/null || true
+rm -f /etc/systemd/system/streampulse-dashboard.service 2>/dev/null || true
 systemctl daemon-reload
 
-# 2. Terminate any running player or kiosk instances
-pkill -f "streampulse-player" 2>/dev/null || true
-pkill -f "chromium-profile" 2>/dev/null || true
-pkill -f "dashboard-kiosk.sh" 2>/dev/null || true
-pkill -f "player-launcher.sh" 2>/dev/null || true
-pkill -f "mpv.*motion-logo" 2>/dev/null || true
-rm -f /tmp/streampulse-player.lock 2>/dev/null || true
+echo "[2/4] Removing kiosk launch scripts and configs..."
+rm -f /opt/streampulse/bin/dashboard-kiosk.sh 2>/dev/null || true
+rm -f /opt/streampulse/config/kiosk.conf 2>/dev/null || true
 
-# 3. Clean dedicated browser profile & temporary locks
-if [[ -d "/opt/streampulse/chromium-profile" ]]; then
-  echo "  [+] Removing isolated kiosk browser profile (/opt/streampulse/chromium-profile)..."
-  rm -rf /opt/streampulse/chromium-profile
+# Remove labwc autostart kiosk line if present
+if [ -f "${TARGET_HOME}/.config/labwc/autostart" ]; then
+  sed -i '/dashboard-kiosk\.sh/d' "${TARGET_HOME}/.config/labwc/autostart" 2>/dev/null || true
 fi
 
-# 4. Remove binaries and kiosk configs while preserving logo directory
-if [[ -d "/opt/streampulse/bin" ]]; then
-  echo "  [+] Removing /opt/streampulse/bin scripts..."
-  rm -rf /opt/streampulse/bin
-fi
+# Remove desktop autostart entry if present
+rm -f "${TARGET_HOME}/.config/autostart/streampulse-kiosk.desktop" 2>/dev/null || true
 
-if [[ -f "/opt/streampulse/config/kiosk.conf" ]]; then
-  echo "  [+] Removing /opt/streampulse/config/kiosk.conf..."
-  rm -f /opt/streampulse/config/kiosk.conf
-fi
+echo "[3/4] Preserving media, player service, and user configurations..."
+echo "  - /opt/streampulse/media preserved"
+echo "  - streampulse-rpi-player service preserved"
+echo "  - RustDesk and Audio (PipeWire/WirePlumber) untouched"
 
-echo "----------------------------------------------------------------------"
-echo "Uninstallation completed safely."
-echo "Note: Common logo folder (/opt/streampulse/logo) was preserved intact."
-echo ""
-echo "To restore a previous backup, run:"
-echo "  sudo ~/streampulse-backups/latest/restore.sh"
-echo "======================================================================"
+echo "[4/4] Finalizing uninstallation..."
+echo "========================================================================"
+echo "✓ StreamPulse Kiosk Suite has been successfully uninstalled."
+echo "If you wish to fully restore your pre-installation snapshot, run:"
+echo "  sudo bash /opt/streampulse/bin/restore.sh"
+echo "========================================================================"
